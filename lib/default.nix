@@ -7,6 +7,11 @@ let
   compose = import ./compose.nix (args // { inherit parity adapter corpus; });
 in
 {
-  inherit parity adapter corpus;
+  inherit
+    parity
+    adapter
+    corpus
+    compose
+    ;
 }
 // compose
