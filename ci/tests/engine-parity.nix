@@ -1,6 +1,11 @@
 { hola, nixpkgs, ... }:
 let
-  inherit (hola) corpus compose adapter;
+  inherit (hola)
+    corpus
+    compose
+    adapter
+    engine
+    ;
   parityFixtures = {
     synthetic = corpus.synthetic.mk { };
     priorityFold = corpus.priorityFold.mk { };
@@ -28,4 +33,8 @@ in
     expr = compose.engineParity fx;
     expected = true;
   }) parityFixtures;
+  flake.tests.non-vacuity.check = {
+    expr = compose.valueEq adapter.engines.vanilla engine._brokenProbe (corpus.valueMeta.mk { });
+    expected = false;
+  };
 }

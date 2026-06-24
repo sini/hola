@@ -23,4 +23,6 @@ in
 {
   inherit mkEngine;
   engine = mkEngine ./vendor/modules.nix;
+  # Test-only: a deliberately-divergent engine for the non-vacuity probe. NOT in adapter.engines.
+  _brokenProbe = mkEngine ./vendor/modules.broken.nix;
 }
