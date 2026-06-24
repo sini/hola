@@ -86,6 +86,49 @@ let
       d = diff { inherit a b; };
     in
     if d.identical then null else head d.divergences;
+
+  drvPathGate =
+    { a, b }:
+    let
+      ea = tryEval a.config.system.build.toplevel.drvPath;
+      eb = tryEval b.config.system.build.toplevel.drvPath;
+    in
+    if ea.success && eb.success then
+      {
+        identical = ea.value == eb.value;
+        aDrv = ea.value;
+        bDrv = eb.value;
+      }
+    else
+      {
+        identical = false;
+        aDrv = if ea.success then ea.value else "<<throw>>";
+        bDrv = if eb.success then eb.value else "<<throw>>";
+      };
+
+  # `projection` = an already-picked value; the engine:fx wrapper lives in compose.nix (Task 7, §6).
+  expectThrow = projection: !(tryEval (force projection)).success;
+
+  # pick-builder: augments a base pick with option-shape data.
+  # NOTE: getSubOptions (and result.options) always carry the synthetic `_module`
+  # pseudo-option — filter it so the surface is the real option names only.
+  withOptionShape =
+    {
+      basePick ? (_: { }),
+      options ? null,
+      subOptionPaths ? { },
+    }:
+    result:
+    let
+      dropModule = builtins.filter (n: n != "_module");
+    in
+    (basePick result)
+    // {
+      __optionNames = if options != null then options else dropModule (attrNames result.options);
+      __subOptions = lib.mapAttrs (
+        opt: loc: dropModule (attrNames (result.options.${opt}.type.getSubOptions loc))
+      ) subOptionPaths;
+    };
 in
 {
   inherit
@@ -93,5 +136,8 @@ in
     diffAt
     diff
     locate
+    drvPathGate
+    expectThrow
+    withOptionShape
     ;
 }

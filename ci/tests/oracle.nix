@@ -1,6 +1,38 @@
-{ hola, ... }:
+{ hola, inputs, ... }:
 let
   p = hola.parity;
+  lib = inputs.nixpkgs.lib;
+  mockA = {
+    config.system.build.toplevel.drvPath = "/nix/store/aaa";
+  };
+  mockB = {
+    config.system.build.toplevel.drvPath = "/nix/store/bbb";
+  };
+  optResult = lib.evalModules {
+    modules = [
+      {
+        options.svc = lib.mkOption {
+          type = lib.types.attrsOf (
+            lib.types.submodule {
+              options.port = lib.mkOption {
+                type = lib.types.int;
+                default = 0;
+              };
+            }
+          );
+          default = { };
+        };
+      }
+    ];
+  };
+  picked = p.withOptionShape {
+    subOptionPaths = {
+      svc = [
+        "svc"
+        "*"
+      ];
+    };
+  } optResult;
 in
 {
   flake.tests.oracle = {
@@ -128,6 +160,38 @@ in
           };
         }).path;
       expected = [ "x" ];
+    };
+    drvPathGate-equal = {
+      expr =
+        (p.drvPathGate {
+          a = mockA;
+          b = mockA;
+        }).identical;
+      expected = true;
+    };
+    drvPathGate-differ = {
+      expr =
+        (p.drvPathGate {
+          a = mockA;
+          b = mockB;
+        }).identical;
+      expected = false;
+    };
+    expectThrow-throws = {
+      expr = p.expectThrow (throw "x");
+      expected = true;
+    };
+    expectThrow-clean = {
+      expr = p.expectThrow 1;
+      expected = false;
+    };
+    withOptionShape-subopts = {
+      expr = picked.__subOptions.svc;
+      expected = [ "port" ];
+    };
+    withOptionShape-names = {
+      expr = builtins.elem "svc" picked.__optionNames;
+      expected = true;
     };
   };
 }
