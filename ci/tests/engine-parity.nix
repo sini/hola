@@ -37,4 +37,11 @@ in
     expr = compose.valueEq adapter.engines.vanilla engine._brokenProbe (corpus.valueMeta.mk { });
     expected = false;
   };
+  flake.tests.vendor-integrity.check = {
+    # K9: at E1 the vendored body is verbatim. (`nixpkgs` is the resolved input outPath.)
+    expr =
+      builtins.readFile ../../lib/engine/vendor/modules.nix
+      == builtins.readFile (nixpkgs + "/lib/modules.nix");
+    expected = true;
+  };
 }

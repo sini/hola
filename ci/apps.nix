@@ -39,5 +39,6 @@
       apps.scaling-curve = mkBench "scaling-curve" [ ] ./bench/scaling-curve.sh;
       apps.floor-decomp = mkBench "floor-decomp" [ ] ./bench/floor-decomp.sh;
       apps.parity-report = mkBench "parity-report" [ pkgs.hyperfine ] ./bench/parity-report.sh;
+      apps.vendor-check = mkBench "vendor-check" [ ] ./bench/vendor-check.sh;
     };
 }
