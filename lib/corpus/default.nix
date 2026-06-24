@@ -2,6 +2,8 @@
 let
   synthetic = import ./synthetic.nix { inherit lib; };
   landmines = import ./landmines.nix { inherit lib; };
+  realHost = import ./real-host.nix { inherit lib; };
+  floor = import ./floor.nix { inherit lib; };
 in
 {
   synthetic = {
@@ -14,6 +16,16 @@ in
     gate = "value";
     tier = "both";
   };
+  # realHost.mk needs nixpkgs at call time, so gate is declared (not derived from mk {}).
+  realHost = {
+    inherit (realHost) mk;
+    defaultParams = {
+      n = 5;
+    };
+    gate = "drvPath";
+    tier = "both";
+  };
+  inherit floor;
 }
 // lib.mapAttrs (_: lm: {
   inherit (lm) mk;
