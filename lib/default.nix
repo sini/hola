@@ -14,4 +14,3 @@ in
     compose
     ;
 }
-// compose
