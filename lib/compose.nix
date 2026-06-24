@@ -28,6 +28,14 @@ let
       drvEq engines.vanilla engines.identity fx
     else
       valueEq engines.vanilla engines.identity fx;
+  engineParity =
+    fx:
+    if (fx.gate or "value") == "throws" then
+      (expectThrowFx engines.vanilla fx) && (expectThrowFx engines.engine fx)
+    else if (fx.gate or "value") == "drvPath" then
+      drvEq engines.vanilla engines.engine fx
+    else
+      valueEq engines.vanilla engines.engine fx;
 in
 {
   inherit
@@ -35,5 +43,6 @@ in
     drvEq
     expectThrowFx
     selfParity
+    engineParity
     ;
 }
