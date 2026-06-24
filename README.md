@@ -205,7 +205,7 @@ corpus.
 
 | Grounding | Relationship | Where it shows up |
 |-----------|--------------|-------------------|
-| Pierce (2002) "Types and Programming Languages" — observational / contextual equivalence | Informed by | The **parity contract**: two evaluators are equal iff no context (corpus fixture) distinguishes their results. `compose.selfParity` is exactly this judgement. |
+| Pierce (2002) "Types and Programming Languages" — observational / contextual equivalence | Informed by | The **parity contract**: two evaluators are equal iff no context (corpus fixture) distinguishes their results. `compose.selfParity` is the finite-corpus instance of this judgement (an under-approximation — it quantifies over the corpus, not all contexts). |
 | Tiered observation oracle | Implements | `hola.parity` splits the observable into a **config projection-value diff** (`diff`/`diffAt`, structural over forced values) and a **drvPath string-identity** gate (`drvPathGate`) for the host tier — value equality where values are cheap, derivation identity where they are not. |
 | Order-sensitive merge (nixpkgs module system, D6) | Pinned by | The `order`/`priorityFold`/`valueMeta` landmines encode `mkBefore < normal < mkAfter` and the reverse-declaration-order same-priority list merge — the merge semantics any engine must reproduce byte-for-byte. |
 | HC5 — `submodule` / `extendModules` override seam | Targeted by | `engines.identity` routes through a `lib.extend` override of `modules.evalModules`, the same seam the engine arm replaces; it is the single point where a substitute evaluator attaches. |
