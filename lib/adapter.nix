@@ -1,5 +1,7 @@
 { lib }:
 let
+  engineConcern = import ./engine { inherit lib; };
+
   engines = {
     # Each engine carries its lib AND evalModules so the host tier (runHost) can thread the
     # engine's possibly-extended lib into eval-config.
@@ -23,7 +25,9 @@ let
         lib = elib;
         evalModules = elib.evalModules;
       };
-    # engine = { lib = holaLib; evalModules = holaLib.evalModules; };  # added in the engine increment
+    # engine: the vendored-body seam — mkEngine overrides `final.modules` ALONE (lib/engine), so
+    # the whole module surface (evalModules/mkIf/…) routes through the owned copy via the fixpoint.
+    engine = engineConcern.engine;
   };
 
   # value / synthetic / landmine tier:
