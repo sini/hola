@@ -4,6 +4,7 @@ let
   landmines = import ./landmines.nix { inherit lib; };
   realHost = import ./real-host.nix { inherit lib; };
   denTemplate = import ./den-template.nix { inherit lib; };
+  denFleet = import ./den-fleet.nix { inherit lib; };
   floor = import ./floor.nix { inherit lib; };
 in
 {
@@ -29,6 +30,12 @@ in
   denTemplate = {
     inherit (denTemplate) mk;
     defaultParams = { }; # mk is called with denCorpus at the test site (Task 2), not with params
+    gate = "drvPath";
+    tier = "parity";
+  };
+  denFleet = {
+    inherit (denFleet) mk;
+    defaultParams = { };
     gate = "drvPath";
     tier = "parity";
   };

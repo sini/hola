@@ -67,6 +67,39 @@ let
       };
     in
     t.hostOf out;
+
+  # Build the engine lib from an ARBITRARY base lib (the host's channel lib), so the vendored body
+  # rides the SAME nixpkgs the host really uses. `import ./engine { lib = baseLib; }` re-instantiates
+  # the engine module against baseLib (no engine change — the module is `{ lib }:`-shaped).
+  fleetEngineLib = baseLib: (import ./engine { lib = baseLib; }).engine.lib;
+
+  # Fleet tier (gate="drvPath"): re-invoke nix-config's RAW outputs with the host's channel input's
+  # .lib replaced by `doctor channelLib`, + the lazy outPath-carrying self-knot. Pure: a declared
+  # flake input exposes .inputs/.outPath. `self` is the ONE input getFlake omits and the toplevel both
+  # string-coerces it (host.nix:391) AND forces self.overlays.default (nixpkgs.nix:16) — the lazy
+  # `out` fixpoint carrying outPath/sourceInfo supplies both. `doctor = id` ⇒ host's REAL build;
+  # `doctor = fleetEngineLib` ⇒ host's build with the engine. Identical iff vendored ≡ channel modules.nix.
+  runDenFleet =
+    doctor: fx:
+    let
+      f = fx.denFleet;
+      nc = f.nixConfig;
+      chan = nc.inputs.${f.channelInput};
+      raw = import (nc.outPath + "/flake.nix");
+      out = raw.outputs (
+        nc.inputs
+        // {
+          self = out // {
+            outPath = nc.outPath;
+            inherit (nc) sourceInfo;
+          };
+          ${f.channelInput} = chan // {
+            lib = doctor chan.lib;
+          };
+        }
+      );
+    in
+    out.nixosConfigurations.${f.host};
 in
 {
   inherit
@@ -74,5 +107,7 @@ in
     run
     runHost
     runDenTemplate
+    fleetEngineLib
+    runDenFleet
     ;
 }
