@@ -3,6 +3,7 @@ let
   synthetic = import ./synthetic.nix { inherit lib; };
   landmines = import ./landmines.nix { inherit lib; };
   realHost = import ./real-host.nix { inherit lib; };
+  denTemplate = import ./den-template.nix { inherit lib; };
   floor = import ./floor.nix { inherit lib; };
 in
 {
@@ -24,6 +25,12 @@ in
     };
     gate = "drvPath";
     tier = "both";
+  };
+  denTemplate = {
+    inherit (denTemplate) mk;
+    defaultParams = { }; # mk is called with denCorpus at the test site (Task 2), not with params
+    gate = "drvPath";
+    tier = "parity";
   };
   inherit floor;
 }

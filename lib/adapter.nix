@@ -50,7 +50,29 @@ let
       system = "x86_64-linux";
       modules = fx.modules;
     };
+
+  # Den-template tier (gate="drvPath"): invoke the template's RAW outputs with inputs.nixpkgs.lib
+  # doctored to the engine's lib (full-surface), return the host NixOS eval result.
+  runDenTemplate =
+    engine: fx:
+    let
+      t = fx.denTemplate;
+      raw = import (t.den.outPath + "/templates/${t.template}/flake.nix");
+      out = raw.outputs {
+        nixpkgs = t.nixpkgsFlake // {
+          lib = engine.lib;
+        };
+        import-tree = t.importTree;
+        den = t.den;
+      };
+    in
+    t.hostOf out;
 in
 {
-  inherit engines run runHost;
+  inherit
+    engines
+    run
+    runHost
+    runDenTemplate
+    ;
 }
