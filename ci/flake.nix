@@ -1,4 +1,10 @@
 {
+  nixConfig = {
+    extra-experimental-features = [
+      "pipe-operators"
+      "pipe-operator"
+    ];
+  };
   inputs = {
     gen.url = "github:sini/gen";
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
