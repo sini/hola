@@ -2,6 +2,8 @@
   inputs = {
     gen.url = "github:sini/gen";
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+    den.url = "github:denful/den";
+    import-tree.url = "github:vic/import-tree";
   };
   outputs =
     inputs@{ gen, nixpkgs, ... }:
@@ -17,7 +19,13 @@
       # nixpkgs threaded for the real-host fixture (eval-config import) in later tasks.
       specialArgs = {
         inherit hola;
-        nixpkgs = nixpkgs.outPath or nixpkgs;
+        nixpkgs = nixpkgs.outPath or nixpkgs; # outPath string for the realHost fixture
+        # E2a: the Den-template corpus needs the nixpkgs FLAKE (for .lib / nixosSystem) + den + import-tree
+        denCorpus = {
+          inherit (inputs) den;
+          importTree = inputs.import-tree;
+          nixpkgsFlake = nixpkgs;
+        };
       };
     };
 }
