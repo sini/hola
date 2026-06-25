@@ -4,6 +4,7 @@
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
     den.url = "github:denful/den";
     import-tree.url = "github:vic/import-tree";
+    nix-config.url = "github:sini/nix-config";
   };
   outputs =
     inputs@{ gen, nixpkgs, ... }:
@@ -25,6 +26,9 @@
           inherit (inputs) den;
           importTree = inputs.import-tree;
           nixpkgsFlake = nixpkgs;
+        };
+        denFleet = {
+          nixConfig = inputs.nix-config;
         };
       };
     };
