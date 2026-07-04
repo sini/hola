@@ -419,7 +419,8 @@ fold, now fixed:
   the `baseline-composition` digest).
 - **The `class-share` TERMINAL byte gate** (`toplevel.drvPath` under s2 == pinned)
   is run **out-of-band**, not as a fifth canonical key. A `_`-prefixed manifest
-  entry is skipped by the driver (unrunnable via `--arms`), and the key set is
+  entry would be skipped by the driver (unrunnable via `--arms`, and none exists),
+  and the key set is
   locked — so the terminal gate is a documented `nix eval` (see
   `baselines/README.md`) whose result is recorded as a secondary evidence block in
   `dedup-savings.json`. Verified byte-identical on all three hosts.
@@ -463,11 +464,37 @@ reproduce here — reconciled, not contradicted:
    (share class work across hosts of a class in ONE eval). `fleet-stats` evaluates
    each host in a SEPARATE process — no cross-host thunk sharing is structurally
    possible, so s2's sharing cannot manifest and only its overhead shows.
-1. **The declaration layer is already shared.** Even forcing blade+cortex
-   composition in ONE eval, the pinned-den cost is ~1.07× a single host (18.8M vs
-   17.67M `nrFunctionCalls`) — native Nix thunk memoization already collapses the
-   shared option-declaration tree. There is nothing there for s2 to dedup; its win
-   lives one layer down, in config RESOLUTION.
+
+1. **The declaration layer is already shared** (keystone — reproducible). Forcing
+   blade + cortex `compositionNames` from ONE shared `out` (both nixpkgs-master,
+   pinned den) costs **18,836,571 `nrFunctionCalls`** — only **1.066×** a single
+   host (blade `baseline-composition` = 17,673,112), NOT 2× (the naive per-host sum
+   is 35,350,336). Native Nix thunk memoization already collapses the shared
+   option-declaration tree in-process, so there is nothing there for s2 to dedup;
+   its win lives one layer down, in config RESOLUTION. Reproduce (from the repo
+   root):
+
+   ```sh
+   NIX_SHOW_STATS=1 NIX_SHOW_STATS_PATH=/tmp/keystone.json nix eval --impure --raw --expr '
+   let
+     nc = builtins.getFlake "github:sini/nix-config/8f84aa62168994714d5dc18459d4c5fe96650239";
+     lib = nc.inputs.nixpkgs-master.lib;
+     hola = import ./. { inherit lib; };
+     raw = import (nc.outPath + "/flake.nix");
+     out = raw.outputs (nc.inputs // {
+       self = out // { outPath = nc.outPath; inherit (nc) sourceInfo; };
+       nixpkgs-master = nc.inputs.nixpkgs-master // { lib = nc.inputs.nixpkgs-master.lib; };
+     });
+     compOf = host: hola.adapter.compositionNames out.nixosConfigurations.${host};
+   in builtins.deepSeq [ (compOf "blade") (compOf "cortex") ] "two-host-forced"'
+   jq -c '{nrFunctionCalls,nrPrimOpCalls,nrOpUpdateValuesCopied,nrThunks}' /tmp/keystone.json
+   # {"nrFunctionCalls":18836571,"nrPrimOpCalls":5386089,"nrOpUpdateValuesCopied":5746283,"nrThunks":21676083}
+   ```
+
+   (`nrFunctionCalls`/`nrPrimOpCalls` are preamble-invariant; `nrOpUpdateValuesCopied`
+   / `nrThunks` may shift ±1–2 under a different preamble — see the
+   `dedup-savings.json` `pinNote`. The 1.066× ratio is unaffected.)
+
 1. **No terminating witness reaches the resolution layer.** The only
    derivation-free witness that completes cleanly is the options walk (declaration
    layer). `cfg.config` (the resolution layer where s2 helps) does not terminate:
