@@ -266,7 +266,19 @@ rebase is required.
 All four were run at 1-host scale. The self-contained recipe uses
 `builtins.getFlake` on the pinned nix-config (impure, reproducible); Task 5's
 driver will thread `denFleet.nixConfig` from `specialArgs` instead, forcing the
-identical expressions. Preamble common to the fleet forces:
+identical expressions.
+
+> **Stub provenance — illustrative, not authoritative.** These stubs were captured
+> at protocol time with the `compositionWitness` recipe and the doc-time harness.
+> The **shipped** driver's composition arm instead forces
+> `hashString "sha256" (toJSON (compositionNames cfg))` via the baked-store-path
+> preamble, so its digest is a sha256 (not `true`) and its counters differ by 1–2
+> from these stubs (e.g. composition `//`-copies 4169338→4169336; toplevel
+> `nrPrimOpCalls` 12237806→12237805, `//`-copies 30515568→30515566).
+> `ci/bench/baselines/g6-split.json` is authoritative for exact values; do not
+> re-run these stubs.
+
+Preamble common to the fleet forces:
 
 ```nix
 let

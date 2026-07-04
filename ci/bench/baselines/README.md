@@ -79,7 +79,10 @@ metric on a different projection than this counter split, so **reconcile, do not
 equate**. They agree directionally and corroborate each other: cortex composition
 is only **3.9%** of the terminal `//`-storm ⇒ ~96% of the terminal's merge work is
 outside declaration composition (value/derivation realization), the same regime the
-94%-time prior names. The `nrFunctionCalls` ratio reads higher (36.1%) only because
+94%-time prior names. And because the options witness **over-counts** declaration
+work — it walks off-cone options the terminal never merges — the 3.9% composition
+share is an **upper bound**, so the ~96% realization residual is a conservative
+**lower bound**. The `nrFunctionCalls` ratio reads higher (36.1%) only because
 the composition witness traverses all declared options off-cone — counting function
 calls the terminal never makes — which is exactly why fcalls and `//`-copies
 diverge. There is no contradiction here to investigate: a minority-composition,
