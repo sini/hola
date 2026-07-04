@@ -422,8 +422,10 @@ MEASUREMENT.md's cross-plane note.
 ### How to reproduce
 
 The deterministic counters + digests reproduce bit-for-bit per nix version (same discipline as
-`g6-split.json`). One self-contained driver measures + byte-gates + emits `facts.json`; the jq
-below computes the load-bearing arithmetic; the committed JSON carries the full framing/notes.
+`g6-split.json`). One self-contained driver measures + byte-gates + emits `facts.json`; the FULL
+generator below reshapes it into the committed baseline **byte-for-byte** (every counter, digest,
+delta, fraction, and ratio is jq-derived from the measured facts; only `PINS` + `PRIOR` + the prose
+framing are literal — same split as the `g6-split.json` / `dedup-savings.json` generators).
 
 1. Measure (runs the oracle, the three forces ×2 with STOP-on-diff, the byte gate, the
    `system.path` soundness check, and the informational native-share probe). Green ⇒ the byte
@@ -434,23 +436,110 @@ below computes the load-bearing arithmetic; the committed JSON carries the full 
    bash ci/bench/class-share-realization.sh --out /tmp/csr    # ~5–6 min; ulimit -s unlimited is set inside
    ```
 
-1. Load-bearing arithmetic from `facts.json` (saving = reconstruct − inject; fractions; the
-   native-share ratio; the byte gate). Every number below is jq-derived from the measured facts;
-   the committed `class-share-realization.json` adds the pins, `priorContext`, and prose framing:
+1. Regenerate `class-share-realization.json` from `facts.json`. `PINS` is the input-rev block;
+   `PRIOR` is the cited synth context (the ONLY hand-transcribed numbers — same convention as
+   `dedup-savings.json` citing the 60% prior); every measured value AND every derived delta /
+   fraction / ratio (incl `perAddedMemberSaving`, `projectionCostShare.systemdUnitsFractionOfMemberFcalls`,
+   `realizationPlaneNativeShare.savedVsSeparateSumFcalls`) is jq-computed from `facts.json`:
 
    ```sh
-   jq '
-     ["nrFunctionCalls","nrPrimOpCalls","nrOpUpdateValuesCopied","nrThunks"] as $C
-     | .counters.reconstruct.counters as $R | .counters.inject.counters as $I
-     | .counters.archetype.counters as $A | .realizationPlaneNativeShare.counters as $NS
-     | { byteGateHolds: .byteGate.gate,
-         systemPathClassInvariant: .systemPath.classInvariant,
-         sharedCore: { byteIdenticalShared: .class.byteIdenticalShared,
-                       sharedFractionOfMember: (.class.byteIdenticalShared / .class.memberUnits) },
-         perAddedMemberSaving: ($C | map({(.): ($R[.] - $I[.])}) | add),
-         savingFractionOfReconstruct: ($C | map({(.): (($R[.] - $I[.]) / $R[.])}) | add),
-         realizationPlaneRatioVsSingleHost: ($NS.nrFunctionCalls / (($A.nrFunctionCalls + $R.nrFunctionCalls) / 2)) }
-   ' /tmp/csr/facts.json
+   FACTS=/tmp/csr/facts.json
+   PINS='{
+     "hola": "8e0b556 (base; the Task-7b follow-up commits — class-share-realization.sh + this baseline + the MEASUREMENT.md/README arm — land ON TOP of this base, at whose working tree these were measured; same convention as g6-split.json _hola_note / dedup-savings.json)",
+     "nix-config": "8f84aa62168994714d5dc18459d4c5fe96650239",
+     "den": "5df0987658d6e44268abba953406480e9f066928",
+     "nixpkgs-master-channel": "5e8ca42db8804dbe70af4d4d3fcd1c71e8409e60",
+     "_priorAnalysis": "~/Documents/papers/hola-architecture/analysis/experiments/synthetic-fleet/instantiate-pattern-realization.md — the N=96 synthetic-class instantiate-pattern mechanism + numbers this arm reproduces IN-SCOPE on the real corpus.",
+     "_meta": "underscore-prefixed keys are prose annotations / pointers, not revs; consumers skip them. den + master-channel are the pinned baseline fleet (NO s1/s2 override — this arm is a resolution-layer PATTERN measurement, orthogonal to den@s2)."
+   }'
+   PRIOR='{
+     "N": 96,
+     "classKind": "synthetic — 96 hostName-VARIANTS of one archetype (extendModules), config spine shared BY CONSTRUCTION",
+     "perAddedMemberMarginal": {
+       "system.path (leaf, ~42% of cost, mkForce whole-inject)": "4.38× fewer copies / 5.15× faster",
+       "systemd.units (co-produced attrset, extendModules+mkForce)": "1.89× fewer copies",
+       "systemd.units (fixed-input config-merge)": "2.48× fleet / 3.32× 6-host"
+     },
+     "whyNot1to1": "Those are HOMOGENEOUS extendModules-VARIANT members sharing the config-resolution spine, and system.path there is class-invariant (all members identical). The real corpus here is HETEROGENEOUS (blade ≠ cortex): each member resolves its OWN full config spine (not shared), and system.path is NOT class-invariant (systemPathUnsound). So the realizable projection (the byte-identical systemd.units core) is CHEAP relative to the unshared spine, and the big system.path win is unsound. Reconciled, not contradicted."
+   }'
+   jq -n --slurpfile f "$FACTS" --argjson pins "$PINS" --argjson prior "$PRIOR" '
+     ($f[0]) as $F
+     | ["nrFunctionCalls","nrPrimOpCalls","nrOpUpdateValuesCopied","nrThunks"] as $C
+     | ($F.counters.archetype.counters)  as $A
+     | ($F.counters.reconstruct.counters) as $R
+     | ($F.counters.inject.counters)      as $I
+     | ($F.realizationPlaneNativeShare.counters) as $NS
+     | def sub2($a;$b): ($C|map({(.):(($a[.])-($b[.]))})|add);
+       def frac($a;$b): ($C|map({(.):(($a[.])/($b[.]))})|add);
+       (sub2($R;$I)) as $saving
+     | { schema: "hola.class-share-realization.v1",
+         generated: {
+           by: "bash ci/bench/class-share-realization.sh --out DIR  →  jq generator over DIR/facts.json (ci/bench/baselines/README.md §class-share-realization). Deltas/fractions are jq-computed; only priorContext + prose is transcribed.",
+           from: "facts.json (measured verbatim: oracle shared-core, archetype/reconstruct/inject counters ×2 STOP-on-diff, byte gate, system.path, realization-plane native share) + PINS + cited priorContext",
+           nixVersion: $F.nixVersion, reps: $F.reps
+         },
+         scope: "REALIZATION-level, SHARED-process, projection-scoped, N=2-member class. NOT a toplevel claim (config-merge reassembles a consumed projection, never a per-host toplevel — the prior-analysis structural limit). NOT 1:1 comparable to the synth 96-host numbers (priorContext) — different N AND heterogeneity.",
+         framing: "Task 7'"'"'s `class-share` arm (MEASUREMENT.md §Arm-C) measured den@s2 at the DECLARATION layer under a SEPARATE-per-host harness: +4.6% overhead, because the class-share win is not there. It is HERE: at the REALIZATION layer, force a class archetype'"'"'s projection ONCE and INJECT its byte-identical shared core into a member via fixed-input config-merge, paying only the member'"'"'s delta. On the real 2-member class {blade,cortex} (archetype=blade), the 212-unit byte-identical systemd.units core injects BYTE-IDENTICALLY (byteGate) and saves the per-added-member (cortex) measurement.perAddedMemberSaving (~1.6% fcalls / ~0.18% //-copies). SMALL because systemd.units realization is only ~2% of a member'"'"'s eval (projectionCostShare) — the host-specific config-resolution spine (~98%) dominates and config-merge does NOT share it across genuinely-distinct hosts. The realization layer does NOT enjoy the declaration layer'"'"'s native in-eval sharing (realizationPlaneNativeShare ≈ 1.5× a single host, vs the keystone declaration 1.066×). What den-hoag must make shareable to reach the synth-projected wins is precisely that config-resolution spine.",
+         pinNote: "Deterministic evaluator counters + digests are EXACT, reproduced ×\($F.reps) with STOP-on-diff (verify: re-run class-share-realization.sh). gcTotalBytes/cpuTime are informational (omitted). Impure-local getFlake on the pinned corpus (master channel); the ±1–2 preamble sensitivity on nrOpUpdateValuesCopied/nrThunks noted in g6-split.json applies, but perAddedMemberSaving is a within-preamble DELTA (reconstruct − inject in the same driver), so it is exact. realizationPlaneNativeShare is a ×1 informational characterization (NOT gated).",
+         pins: $pins,
+         class: {
+           definition: "Option A (recon decision): a 2-member ad-hoc class {blade, cortex} — both nixpkgs-master channel, sharing den'"'"'s module set. NOT a den-DECLARED class (den classes are nixos/home-manager/user, not host-groups); the shared core is the byte-identical projection intersection, and the archetype is one real member. A genuine near-homogeneous class (Option B — e.g. axon k3s nodes) would likely show a larger shared fraction and is the natural follow-up; Option A suffices for a sound, byte-gated N=2 measurement.",
+           members: ["blade","cortex"],
+           archetype: $F.class.archetype,
+           channel: $F.class.channel,
+           projection: $F.class.projection,
+           mechanism: "fixed-input config-merge (the prior-analysis today-usable `shareClassProjection`): core = getAttrs sharedKeys archetype.units (forced ONCE); injected member = core // removeAttrs member.units sharedKeys (member pays only its delta; shared values come from the archetype). NO extendModules re-eval — a plain merge on resolved configs.",
+           sharedCore: {
+             archetypeUnits: $F.class.archetypeUnits,
+             memberUnits: $F.class.memberUnits,
+             byteIdenticalShared: $F.class.byteIdenticalShared,
+             sharedFractionOfMember: ($F.class.byteIdenticalShared / $F.class.memberUnits),
+             sharedKeysDigest: $F.class.sharedKeysDigest,
+             note: "sharedKeys = { k | toJSON archetype.units.k == toJSON member.units.k } — computed here by a byte-identical-intersection ORACLE (forcing both hosts). A real den-hoag class boundary would supply these STRUCTURALLY; the measurement therefore models the ceiling GIVEN a known boundary. Sorted ⇒ deterministic digest."
+           }
+         },
+         byteGate: {
+           oracle: "toJSON injected == toJSON member (the pattern'"'"'s own gate)",
+           injectedEqualsReal: $F.byteGate.gate,
+           coreCount: $F.byteGate.coreCount,
+           injectedDigest: $F.byteGate.injectedDigest,
+           realDigest: $F.byteGate.realDigest,
+           note: "core // member-delta reassembles the member'"'"'s systemd.units BYTE-IDENTICALLY (injectedDigest == realDigest == the reconstruct digest). A mismatch is a bug (unsound sharing), a hard fail in the script."
+         },
+         measurement: {
+           note: "archetype = archetype.units forced fully (paid in BOTH modes — the archetype is a real deployed host). reconstruct = member.units full (vanilla per-member reconstruction). inject = member DELTA only (removeAttrs member.units sharedKeys — the shared core is reused from the archetype). Injected-class cost = archetype + inject; vanilla-class cost = archetype + reconstruct; the per-added-member SAVING is reconstruct − inject (the member'"'"'s shared units it no longer re-realizes). All ×\($F.reps) reps, deterministic counters STOP-on-diff.",
+           archetype: $F.counters.archetype,
+           reconstruct: $F.counters.reconstruct,
+           inject: $F.counters.inject,
+           perAddedMemberSaving: {
+             member: $F.class.member,
+             note: "reconstruct − inject, per counter; the shared 212-unit realization cortex avoids by reusing the archetype core. Positive = a (small) win.",
+             counters: $saving,
+             fractionOfReconstruct: frac($saving; $R)
+           }
+         },
+         projectionCostShare: {
+           note: "Why the saving is small: the systemd.units VALUE realization is a minority of a member'"'"'s eval; the host-specific config-resolution SPINE dominates. Approximate (assumes ~uniform per-unit cost): (saving.fcalls / byteIdenticalShared) × memberUnits / reconstruct.fcalls.",
+           systemdUnitsFractionOfMemberFcalls: (($saving.nrFunctionCalls / $F.class.byteIdenticalShared) * $F.class.memberUnits / $R.nrFunctionCalls),
+           configSpineDominates: "≈98% of a member'"'"'s eval is the config-resolution spine (produce the units attrset at all), unshared across genuinely-distinct hosts; only the ~2% unit-value realization is shareable via config-merge, and only the byte-identical fraction of it."
+         },
+         realizationPlaneNativeShare: {
+           note: "INFORMATIONAL (×1). Both members'"'"' systemd.units forced from ONE shared `out` (keystone-style) — the REALIZATION-layer analogue of the declaration keystone (MEASUREMENT.md §Arm-C reconciliation pt2: blade+cortex compositionNames = 1.066× a single host). Answers: does native memoization share REALIZATION in-eval? Far less than declarations.",
+           counters: $NS,
+           ratioVsSingleHostAvg: ($NS.nrFunctionCalls / (($A.nrFunctionCalls + $R.nrFunctionCalls) / 2)),
+           savedVsSeparateSumFcalls: (1 - ($NS.nrFunctionCalls / ($A.nrFunctionCalls + $R.nrFunctionCalls))),
+           keystoneDeclarationRatio: 1.066,
+           interpretation: "Realization: 2 hosts ≈ 1.5× a single host (25% cheaper than the separate-process sum, from the shared `out`/package closure) — but NOT the declaration layer'"'"'s 1.066×. Host-specific config resolution is not natively shared; declarations are. The third plane in the cross-plane note."
+         },
+         systemPathUnsound: {
+           note: "The synth work'"'"'s biggest projection (system.path, 4.38×) is NOT class-invariant across these heterogeneous reals: blade and cortex have different systemPackages ⇒ different buildEnv drvPath. A whole-leaf mkForce injection would give the member the archetype'"'"'s path ⇒ FAIL the byte gate. So the projection with the big potential win is unsound here; only the cheap systemd.units core is shareable — the heterogeneity double-bind.",
+           archetypeDrvPath: $F.systemPath.archetype,
+           memberDrvPath: $F.systemPath.member,
+           classInvariant: $F.systemPath.classInvariant
+         },
+         priorContext: { synthFleet: $prior }
+       }
+   ' > ci/bench/baselines/class-share-realization.json
    ```
 
    Re-run on the same nix version must reproduce every deterministic counter + digest exactly —

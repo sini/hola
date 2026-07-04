@@ -591,6 +591,17 @@ mismatch. config-merge does a plain merge on RESOLVED configs (no `extendModules
 re-eval), so it reassembles a consumed projection but NEVER a per-host toplevel (the
 prior work's structural limit — do not claim a toplevel win).
 
+**Why config-merge and not `extendModules`+`mkForce` here.** The synth work's other
+mechanism (`extendModules`+`mkForce`, 1.89× on units) works when members are
+hostName-VARIANTS of the archetype (it re-runs `evalModules` on the archetype + a
+patch, sharing the base fixpoint). On HETEROGENEOUS reals the member (cortex) is not
+a variant of the archetype (blade): `blade.extendModules { … = mkForce cortex.units }`
+would produce a frankenconfig (blade's everything else) whose only correct field is
+the injected projection, AND it pays a full per-member `evalModules` re-run — the
+memory-monstrous path the prior work flagged at scale. config-merge is the sound,
+lighter, today-usable mechanism for a real heterogeneous pair; `extendModules` is
+measured only in the synth prior (`priorContext`), not reproduced here.
+
 ### Commands + observed stubs (nix 2.34.7, ×2 reps, STOP-on-diff)
 
 One documented driver — `ci/bench/class-share-realization.sh` (self-contained,
