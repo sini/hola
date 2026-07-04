@@ -14,8 +14,8 @@
 #                        equivalent of the parity test's specialArgs-threaded `denFleet.nixConfig`.
 #
 # Counter convention mirrors gen's perf-bench: cpuTime is the MEDIAN of reps (robust to host speed);
-# the deterministic counters (nrFunctionCalls / nrOpUpdateValuesCopied — the //-merge storm signature
-# — / nrThunks / gc.totalBytes) and the parity digest are taken from the LAST rep. The digest is the
+# the deterministic counters (nrFunctionCalls / nrPrimOpCalls / nrOpUpdateValuesCopied — the //-merge
+# storm signature — / nrThunks / gc.totalBytes) and the parity digest are taken from the LAST rep. The digest is the
 # drvPath string for a terminal arm or the witness-output hash for the composition arm — a per-host,
 # per-arm value a downstream soundness gate byte-compares (Task 7).
 #
@@ -131,7 +131,7 @@ SUMMARY="$OUTDIR/summary.md"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-declare -A CPU FCALLS COPIES THUNKS GCB DIG
+declare -A CPU FCALLS PRIMOP COPIES THUNKS GCB DIG
 
 # The fixed preamble: reconstitute nix-config, doctor=identity (real build), bind cfg. Arm exprs are
 # projections of `cfg` (or, for Task 7, self-contained rebuilds that ignore it — cfg stays lazy).
@@ -180,6 +180,7 @@ run_cell() {
   local mid=$(((REPS + 1) / 2))
   CPU["$host,$arm"]="$(printf '%s\n' "${cpus[@]}" | sort -g | sed -n "${mid}p")"
   FCALLS["$host,$arm"]="$(jq -r '.nrFunctionCalls' "$statf")"
+  PRIMOP["$host,$arm"]="$(jq -r '.nrPrimOpCalls' "$statf")"
   COPIES["$host,$arm"]="$(jq -r '.nrOpUpdateValuesCopied' "$statf")"
   THUNKS["$host,$arm"]="$(jq -r '.nrThunks' "$statf")"
   GCB["$host,$arm"]="$(jq -r '.gc.totalBytes // 0' "$statf")"
@@ -200,12 +201,12 @@ done
 
 # ── results.csv (long form — one row per host×arm; Task 6 pivots this) ──────────
 {
-  echo "host,arm,channel,cpu_median_s,nrFunctionCalls,nrOpUpdateValuesCopied,nrThunks,gcTotalBytes,digest,reps,nixVersion"
+  echo "host,arm,channel,cpu_median_s,nrFunctionCalls,nrPrimOpCalls,nrOpUpdateValuesCopied,nrThunks,gcTotalBytes,digest,reps,nixVersion"
   for host in "${HOSTS[@]}"; do
     for arm in "${ARMS[@]}"; do
-      printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+      printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
         "$host" "$arm" "${CHANNEL[$host]}" \
-        "${CPU[$host,$arm]}" "${FCALLS[$host,$arm]}" "${COPIES[$host,$arm]}" \
+        "${CPU[$host,$arm]}" "${FCALLS[$host,$arm]}" "${PRIMOP[$host,$arm]}" "${COPIES[$host,$arm]}" \
         "${THUNKS[$host,$arm]}" "${GCB[$host,$arm]}" "${DIG[$host,$arm]}" \
         "$REPS" "$nixVersion"
     done
@@ -216,12 +217,12 @@ done
 {
   echo "## fleet-stats — per-host × per-arm ($REPS reps, nix $nixVersion)"
   echo
-  echo "| host | arm | cpu (s) | nrFunctionCalls | //-copies | nrThunks | gc bytes | digest |"
-  echo "|---|---|---:|---:|---:|---:|---:|---|"
+  echo "| host | arm | cpu (s) | nrFunctionCalls | nrPrimOpCalls | //-copies | nrThunks | gc bytes | digest |"
+  echo "|---|---|---:|---:|---:|---:|---:|---:|---|"
   for host in "${HOSTS[@]}"; do
     for arm in "${ARMS[@]}"; do
-      printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' \
-        "$host" "$arm" "${CPU[$host,$arm]}" "${FCALLS[$host,$arm]}" \
+      printf '| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+        "$host" "$arm" "${CPU[$host,$arm]}" "${FCALLS[$host,$arm]}" "${PRIMOP[$host,$arm]}" \
         "${COPIES[$host,$arm]}" "${THUNKS[$host,$arm]}" "${GCB[$host,$arm]}" \
         "${DIG[$host,$arm]:0:16}"
     done
