@@ -230,6 +230,9 @@ rebuild), NOT a single from-scratch fleet-eval speedup. gen-rebuild does not bea
 `O(|cone|)` total work in a pure single eval (the v3 minimality spike verdict).
 "Dedupe with gen-rebuild today" means: after a localized edit, only affected hosts
 recompute. The arm measures a before→edit→after counter comparison, byte-gated.
+**Outcome (§Task 7 amendments):** re-asserted on the real corpus
+(`resultEqualsFullRebuild = true`); a single-host edit skips the other hosts —
+**66.7% of the fleet composition `nrFunctionCalls`** saved for an edit at bitstream.
 
 **Wiring.** gen-rebuild is standalone (Class B, nixpkgs-lib-free) and is NOT
 re-exported by the gen hub — Task 7 adds it as its own flake input.
@@ -248,6 +251,9 @@ check, `baseline-toplevel`) for each host under den@pinned vs den@s2; the win is
 the composition-counter reduction. Prior to reconcile against: the Plane-2a PoC's
 `≈ 60% per-host composition eval-work collapse at fleet scale` (that PoC lives in
 a published gist, not the repo — Task 6/7 reconciles the number, do not assume it).
+**Outcome (§Task 7 amendments):** byte-SOUND but the ~60% did NOT reproduce here —
+a consistent +4.6% s2 overhead, because the win is a cross-host fleet-eval-sharing
+collapse this separate-per-host-eval harness structurally cannot capture.
 
 **The gate (byte).** The terminal must stay byte-identical: overriding den to s1
 leaves `toplevel.drvPath` unchanged (verified below — `identical: true`). A
@@ -395,3 +401,81 @@ Observed (byte-identical — the class-share soundness gate passes):
   gates (`resultEqualsFullRebuild` for R; terminal `identical` for C).
 - **Task 8 (regression gates):** the fleet parity gate already exists
   (`ci/tests/den-fleet-parity.nix`); run it with `ulimit -s unlimited`.
+
+## Task 7 amendments (execution findings)
+
+Task 7 built both dedup arms and measured them fleet-wide. Two things the
+execution taught that this doc did not pre-state are recorded here; the numbers
+live in `ci/bench/baselines/dedup-savings.json` (both byte gates PASS).
+
+### The canonical-key fold (decision)
+
+The canonical set has four keys but the arms map to five sub-measurements. The
+fold, now fixed:
+
+- **`class-share` = the composition-WIN measurement** (per-host, driven by
+  `fleet-stats`): `compositionNames` under `nc.inputs.den = s2` vs the pinned
+  baseline. Its digest column doubles as the *declaration* byte gate (must equal
+  the `baseline-composition` digest).
+- **The `class-share` TERMINAL byte gate** (`toplevel.drvPath` under s2 == pinned)
+  is run **out-of-band**, not as a fifth canonical key. A `_`-prefixed manifest
+  entry is skipped by the driver (unrunnable via `--arms`), and the key set is
+  locked — so the terminal gate is a documented `nix eval` (see
+  `baselines/README.md`) whose result is recorded as a secondary evidence block in
+  `dedup-savings.json`. Verified byte-identical on all three hosts.
+- **`rebuild-dedup` is FLEET-WIDE, run at ONE host.** Its arm expr builds the
+  whole gen-rebuild fleet graph with a fixed `editHost`, so it is identical for
+  every driver `host` binding; running it per-host would triple the work for the
+  same result. Run it `--hosts bitstream --reps 1`. Its measured counters are the
+  harness eval cost (informational); its **digest** is the soundness-record hash
+  (the gate), and its **saving** is arithmetic on the Task-6 baseline (below), not
+  a per-cell counter.
+
+Consequence: adding these two arms changed the driver's DEFAULT arm set (all
+non-`_` manifest keys), so the G6-baseline refresh now passes explicit
+`--arms baseline-composition,baseline-toplevel` (updated in `baselines/README.md`).
+
+### Arm R (rebuild-dedup): the win is real, and it is reuse-across-change
+
+The gen-rebuild soundness oracle was re-asserted on the REAL corpus (nodes =
+`shared` + the three hosts; edge `host → shared`; `recompute host` forces the
+host's real `compositionNames`): `resultEqualsFullRebuild = true`,
+`coneOnlyRecompute = true` (a poisoned recompute proves the untouched hosts are
+never re-evaluated), reproduced bit-identically across two runs. A single-host
+edit's cone is `[thatHost]`; the saving = Σ of the **skipped** hosts'
+`baseline-composition` counters — for an edit at bitstream, **66.7% of the fleet
+composition `nrFunctionCalls`** (blade + cortex skipped). The pessimal shared-node
+edit recomputes the whole cone (saving 0). As §rebuild-dedup already states, this
+is incremental reuse-ACROSS-CHANGE, not a single-eval speedup.
+
+### Arm C (class-share): byte-SOUND, but NO composition win in this harness — reconciling the ~60% prior
+
+Both byte gates pass (composition digest AND terminal drvPath byte-identical under
+s2, all three hosts) — s2 is a correct resolution-only optimization. But the
+composition-counter DELTA is **positive**: s2 costs a consistent **~+0.81M
+`nrFunctionCalls` (~+4.6%) on every host** (host- and witness-invariant — the
+options walk and the `cfg.config` secondary agree to within ~1000 calls). This is
+s2's per-host machinery overhead (pipe.reads cone-expander + per-sid
+`hostConfigFor`), NOT a win. Three reasons the ~60% Plane-2a prior does not
+reproduce here — reconciled, not contradicted:
+
+1. **Different plane.** The ~60% prior is a CROSS-HOST fleet-eval-sharing collapse
+   (share class work across hosts of a class in ONE eval). `fleet-stats` evaluates
+   each host in a SEPARATE process — no cross-host thunk sharing is structurally
+   possible, so s2's sharing cannot manifest and only its overhead shows.
+1. **The declaration layer is already shared.** Even forcing blade+cortex
+   composition in ONE eval, the pinned-den cost is ~1.07× a single host (18.8M vs
+   17.67M `nrFunctionCalls`) — native Nix thunk memoization already collapses the
+   shared option-declaration tree. There is nothing there for s2 to dedup; its win
+   lives one layer down, in config RESOLUTION.
+1. **No terminating witness reaches the resolution layer.** The only
+   derivation-free witness that completes cleanly is the options walk (declaration
+   layer). `cfg.config` (the resolution layer where s2 helps) does not terminate:
+   its `deepSeq` hits a derivation's `outputsList` and **stack-overflows —
+   uncatchable by `builtins.tryEval`** — so the secondary witness measures
+   work-up-to-a-deterministic-crash (informational; delta only). A definitive
+   cross-host resolution-layer witness (a derivation-pruned `cfg.config` walk
+   forced across class-hosts in one eval — the fleet-eval-sharing plane) is future
+   work; the current per-host harness structurally cannot capture the class-share
+   win. This is exactly the under-report the §baseline-composition concern box
+   predicted, taken to its conclusion.

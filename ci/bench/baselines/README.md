@@ -155,11 +155,14 @@ are Task 7's and are not exercised by this baseline.
 Refresh is a full re-run plus a re-generate. All numbers come from the CSV via `jq`;
 nothing is hand-typed.
 
-1. Full-fleet run (writes `results.csv` + `summary.md` to `--out`):
+1. Full-fleet run (writes `results.csv` + `summary.md` to `--out`). Task 7 added the
+   `class-share` / `rebuild-dedup` arms to the manifest, so the driver's DEFAULT arm
+   set is now all four — the G6 baseline refresh must name its two arms explicitly:
 
    ```sh
    cd ~/Documents/repos/hola
-   nix run ./ci#fleet-stats -- --out /tmp/g6   # defaults: 3 hosts × 2 baseline arms × 3 reps
+   nix run ./ci#fleet-stats -- --arms baseline-composition,baseline-toplevel --out /tmp/g6
+   # 3 hosts × 2 baseline arms × 3 reps (default reps)
    ```
 
    Expected runtime ~5–7 min for the full 3×2×3 default (18 evals); the
@@ -255,3 +258,113 @@ shifts a baseline, **update this JSON and the table above in the same PR, citing
 new run output — never delete a workload (host or arm) to make a comparison pass.**
 New fleet hosts or arms are added to `ci/bench/arms.json` (arms) / the driver's host
 map, then re-baselined here.
+
+## Dedup savings — Arm R + Arm C (`dedup-savings.json`)
+
+`dedup-savings.json` is the Task-7 companion to `g6-split.json`: the two dedup arms
+measured fleet-wide, both **byte-gated**. Read this before the numbers — the two
+savings mean very different things.
+
+**Arm R — `rebuild-dedup` (gen-rebuild), what the counter delta MEANS.** This is
+**incremental reuse-ACROSS-CHANGE, not a single-eval speedup.** The fleet is modelled
+as a gen-rebuild graph (nodes = a shared class-composition producer + the three hosts;
+edge `host → shared`; `recompute host` forces the host's real `compositionNames`). A
+localized single-host edit recomputes ONLY that host's cone and reuses the rest
+byte-for-byte — proven on the real corpus by the oracle `resultEqualsFullRebuild` and a
+poisoned-recompute `coneOnlyRecompute`. The **saving** is therefore the work of the
+hosts you did NOT re-evaluate: Σ of the *skipped* hosts' `baseline-composition` counters
+(from `g6-split.json`). For an edit at bitstream that is blade + cortex ≈ **66.7% of the
+fleet composition `nrFunctionCalls`**. gen-rebuild does not beat `O(|cone|)` total work
+in one pure eval (v3 minimality verdict); the win only exists because a *prior* store is
+reused after a change. The pessimal boundary (a shared-node edit) recomputes everything —
+saving 0 — and is recorded honestly.
+
+**Arm C — `class-share` (den s1/s2), what the counter delta MEANS.** The byte gates PASS
+(composition digest AND terminal `toplevel.drvPath` byte-identical under den@s2, all three
+hosts) — s2 is a correct resolution-only optimization. But the composition-counter delta
+is **positive**: a consistent **~+4.6% s2 machinery overhead** on every host, NOT a win.
+The ~60% Plane-2a prior is a cross-host fleet-eval-sharing collapse that this
+separate-per-host-eval harness structurally cannot capture; the derivation-free witness
+sits at the declaration layer, which native Nix thunk memoization already shares. The
+secondary `cfg.config` witness is **informational only** — its `deepSeq` stack-overflows
+(uncatchable by `builtins.tryEval`), so it measures work-up-to-a-deterministic-crash;
+the delta is stable and agrees with the primary, the absolutes are a crash-prefix. Full
+reasoning: `../MEASUREMENT.md` §"Task 7 amendments".
+
+### How to reproduce
+
+The deterministic counters + digests reproduce bit-for-bit per nix version (verified
+across two runs, same discipline as `g6-split.json`). Every number is regenerated from
+the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
+
+1. Class-share composition, fleet (s2 override), `results.csv`:
+
+   ```sh
+   nix run ./ci#fleet-stats -- --arms class-share --hosts bitstream,blade,cortex --reps 1 --out /tmp/cshare
+   ```
+
+1. Class-share terminal byte gate (out-of-band; s2 `toplevel.drvPath` must equal the
+   `g6-split.json` `baseline-toplevel` digest per host). One host shown; repeat per host:
+
+   ```sh
+   nix eval --impure --raw --expr 'let nc = builtins.getFlake "github:sini/nix-config/8f84aa62168994714d5dc18459d4c5fe96650239"; s2 = builtins.getFlake "git+file:///home/sini/Documents/repos/den?ref=feat/s2-pipe-reads&rev=487cc671e87982ad04bca69fb9a5723c85ed22ca"; lib = nc.inputs.nixpkgs-unstable.lib; hola = import ./. { inherit lib; }; ncS2 = nc // { inputs = nc.inputs // { den = s2; }; }; in (hola.adapter.runDenFleet (l: l) (hola.corpus.denFleet.mk { nixConfig = ncS2; host = "bitstream"; channelInput = "nixpkgs-unstable"; })).config.system.build.toplevel.drvPath'
+   ```
+
+1. Rebuild-dedup soundness record + digest (fleet-wide, run once):
+
+   ```sh
+   nix run ./ci#fleet-stats -- --arms rebuild-dedup --hosts bitstream --reps 1 --out /tmp/rdedup
+   ```
+
+1. Regenerate `dedup-savings.json`. `FACTS` holds the values measured by steps 2–3 (the
+   byte-gate drvPaths, the `rebuild-dedup` soundness record + digest, and the secondary
+   `cfg.config` counters — recorded verbatim from the evals, not derived). The jq program
+   then reads `g6-split.json` (pinned `baseline-composition`) + the class-share CSV (s2
+   composition), computes Arm R's saving as Σ of the *skipped* hosts' `baseline-composition`
+   counters and Arm C's delta as `s2 − pinned` per counter, and asserts both byte gates
+   against `g6-split.json`:
+
+   ```sh
+   FACTS='{
+     "rebuildDedup": { "digest": "d2dc0fee470d38e1d96b12d22130f7534fafc0d5d7af1091c80fc88822b1bd7d",
+       "record": { "editHost": "bitstream", "recomputedCone": ["bitstream"],
+         "untouchedNodes": ["blade","cortex","shared"], "resultEqualsFullRebuild": true,
+         "coneOnlyRecompute": true, "untouchedReused": true } },
+     "classShare": {
+       "toplevelS2DrvPath": {
+         "bitstream": "/nix/store/70xb6lxavlwvn98zhd9badjmvzq7yznn-nixos-system-bitstream-26.11.20260616.567a49d.drv",
+         "blade": "/nix/store/z1j54phnlbgn4sn0nzk7c3fnjwfgs322-nixos-system-blade-26.11.20260622.5e8ca42.drv",
+         "cortex": "/nix/store/93da5ba9ahyan0cs0dmp73cpyrlfdvgi-nixos-system-cortex-26.11.20260622.5e8ca42.drv" },
+       "secondaryCfgConfig": {
+         "bitstream": { "pinned": {"nrFunctionCalls":19840113,"nrPrimOpCalls":6032270,"nrOpUpdateValuesCopied":12586179,"nrThunks":23940301}, "s2": {"nrFunctionCalls":20651047,"nrPrimOpCalls":6156056,"nrOpUpdateValuesCopied":12635184,"nrThunks":24752869} },
+         "blade": { "pinned": {"nrFunctionCalls":23979069,"nrPrimOpCalls":8058894,"nrOpUpdateValuesCopied":46453104,"nrThunks":33426022}, "s2": {"nrFunctionCalls":24790553,"nrPrimOpCalls":8183348,"nrOpUpdateValuesCopied":46502131,"nrThunks":34239457} },
+         "cortex": { "pinned": {"nrFunctionCalls":23738771,"nrPrimOpCalls":7885919,"nrOpUpdateValuesCopied":44842162,"nrThunks":32807311}, "s2": {"nrFunctionCalls":24550282,"nrPrimOpCalls":8010378,"nrOpUpdateValuesCopied":44891196,"nrThunks":33620825} } } } }'
+   PINS='{ "hola":"65179bd (base; the Task-7 dedup wiring lands in the follow-up commits on top, at whose working tree these were measured)",
+     "nix-config":"8f84aa62168994714d5dc18459d4c5fe96650239", "den-baseline":"5df0987658d6e44268abba953406480e9f066928",
+     "den-s1":"b3449c8ba0325d51a00cd973b8eb104575691dc1", "den-s2":"487cc671e87982ad04bca69fb9a5723c85ed22ca",
+     "gen-rebuild":"7a87691f004679668852d53fc130a57bc305e20a", "nixpkgs-unstable-channel":"567a49d1913ce81ac6e9582e3553dd90a955875f",
+     "nixpkgs-master-channel":"5e8ca42db8804dbe70af4d4d3fcd1c71e8409e60",
+     "_meta":"prose annotations skipped by consumers; den-s1/s2 are local-only worktree branches (git+file://), gen-rebuild is public" }'
+   S2=$(jq -R -s 'split("\n")|map(select(length>0))|.[1:]|map(split(","))
+     |map({(.[0]):{counters:{nrFunctionCalls:(.[4]|tonumber),nrPrimOpCalls:(.[5]|tonumber),nrOpUpdateValuesCopied:(.[6]|tonumber),nrThunks:(.[7]|tonumber)},digest:.[9]}})|add' /tmp/cshare/results.csv)
+   jq -n --slurpfile g6f ci/bench/baselines/g6-split.json --argjson s2 "$S2" --argjson facts "$FACTS" --argjson pins "$PINS" '
+     ($g6f[0]) as $g6 | ["nrFunctionCalls","nrPrimOpCalls","nrOpUpdateValuesCopied","nrThunks"] as $C
+     | def add2($a;$b): ($C|map({(.):(($a[.])+($b[.]))})|add); def sub2($a;$b): ($C|map({(.):(($a[.])-($b[.]))})|add); def divf($a;$b): ($C|map({(.):(($a[.])/($b[.]))})|add);
+       ([$facts.rebuildDedup.record.untouchedNodes[]|select(. as $n|$g6.hosts|has($n))]) as $uh
+     | ($uh|map($g6.hosts[.]["baseline-composition"].counters)|reduce .[] as $c ({"nrFunctionCalls":0,"nrPrimOpCalls":0,"nrOpUpdateValuesCopied":0,"nrThunks":0}; add2(.;$c))) as $saved
+     | ($g6.fleet["baseline-composition"].counters) as $fleetComp
+     | { schema:"hola.dedup-savings.v1", pins:$pins,
+         "rebuild-dedup": { byteGate:{ resultEqualsFullRebuild:$facts.rebuildDedup.record.resultEqualsFullRebuild, coneOnlyRecompute:$facts.rebuildDedup.record.coneOnlyRecompute, digest:$facts.rebuildDedup.digest },
+           singleHostEdit:{ editHost:$facts.rebuildDedup.record.editHost, recomputedCone:$facts.rebuildDedup.record.recomputedCone, untouchedNodes:$facts.rebuildDedup.record.untouchedNodes,
+             savedRecompute:{counters:$saved}, savedFractionOfFleetComposition:divf($saved;$fleetComp) } },
+         "class-share": { byteGate:{
+             compositionDigest:{ identical:([$g6.hosts|keys[]|($g6.hosts[.]["baseline-composition"].digest==$s2[.].digest)]|all) },
+             toplevelDrvPath:{ identical:([$g6.hosts|keys[]|($g6.hosts[.]["baseline-toplevel"].digest==$facts.classShare.toplevelS2DrvPath[.])]|all) } },
+           compositionWitness:{ perHost:($g6.hosts|keys|map(. as $h|{($h):{pinned:$g6.hosts[$h]["baseline-composition"].counters,s2:$s2[$h].counters,delta:sub2($s2[$h].counters;$g6.hosts[$h]["baseline-composition"].counters)}})|add) } } }
+     ' > ci/bench/baselines/dedup-savings.json
+   ```
+
+   The committed `dedup-savings.json` carries the full framing/notes; the snippet above is
+   the load-bearing arithmetic (saving = Σ skipped-host baseline composition; delta =
+   `s2 − pinned`; both byte gates). Re-run on the same nix version must reproduce every
+   deterministic counter + digest exactly — if not, **STOP and report, do not average.**
