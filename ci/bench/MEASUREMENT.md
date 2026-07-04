@@ -16,10 +16,25 @@ The campaign has two questions:
   Measured by the `rebuild-dedup` (gen-rebuild) and `class-share` (den s1/s2)
   arms.
 
-Measurement style is deterministic counters from `NIX_SHOW_STATS`
+Measurement style is deterministic evaluator counters from `NIX_SHOW_STATS`
 (`nrFunctionCalls`, `nrPrimOpCalls`, `nrOpUpdateValuesCopied` — the `//`-merge
-storm signature — plus `gc.totalBytes`) with `cpuTime` as a soft secondary. All
-protocol commands are `nix eval` / `nix-instantiate` shapes compatible with that.
+storm signature — and `nrThunks`) plus the parity digests, with `gc.totalBytes` and
+`cpuTime` as recorded-only secondaries. All protocol commands are `nix eval` /
+`nix-instantiate` shapes compatible with that.
+
+**Counter determinism (measured, 6-cell).** The four evaluator counters above and
+both digests are bit-reproducible per nix version — verified **identical across two
+full fleet runs** (bitstream/blade/cortex × both baseline arms, nix 2.34.7): they
+are the **exact-pinnable** set. `gc.totalBytes` is **recorded-only** — a Boehm
+total-allocation number, not an evaluator counter, which drifted **~1e-6..1e-5
+relative** between those same two runs (a few KB on multi-GB totals, e.g. bitstream
+composition 1,327,464,832 → 1,327,466,160; blade toplevel 7,317,612,304 →
+7,317,605,776) — so it is noise-banded and **never exact-gated**; `cpuTime` is
+likewise recorded-only (machine-dependent). Baselines therefore exact-pin only the
+deterministic set; `gc.totalBytes` / `cpuTime` may feed FLOOR or RATIO gates with
+explicit headroom, never an equality check. See
+`ci/bench/baselines/README.md` §"What is pinned / not pinned" for the per-cell
+evidence table and the Task 8 gate policy.
 
 ## Pinned revisions
 
