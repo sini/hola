@@ -202,7 +202,7 @@ let
       overrideWithPoison = propagateEager (ctx // { recompute = poison; }) { ${editHost} = newDecls; };
     in
     {
-      editHost = editHost;
+      inherit editHost;
       recomputedCone = builtins.sort builtins.lessThan cone;
       untouchedNodes = builtins.sort builtins.lessThan untouched;
       # THE byte gate: incremental store == from-scratch build with the edit applied.

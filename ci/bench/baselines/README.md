@@ -259,6 +259,14 @@ new run output — never delete a workload (host or arm) to make a comparison pa
 New fleet hosts or arms are added to `ci/bench/arms.json` (arms) / the driver's host
 map, then re-baselined here.
 
+**Fleet-topology edit sites (a host/channel addition must touch ALL of these — none
+can be silently missed):** (1) `ci/bench/fleet-stats.sh` — the `CHANNEL` host→channel
+map AND `FLEET_DEFAULT` (the driver's default host list); (2) the `rebuild-dedup` arm
+`expr` in `ci/bench/arms.json` — its own inline `channelOf` map AND `hosts` list (the
+arm is self-contained, so it does NOT read the driver map); (3) re-baseline both
+`g6-split.json` and `dedup-savings.json` for the new host. Miss (2) and the fleet
+graph silently keeps the old host set while the baselines grow — a false pass.
+
 ## Dedup savings — Arm R + Arm C (`dedup-savings.json`)
 
 `dedup-savings.json` is the Task-7 companion to `g6-split.json`: the two dedup arms
@@ -277,7 +285,12 @@ hosts you did NOT re-evaluate: Σ of the *skipped* hosts' `baseline-composition`
 fleet composition `nrFunctionCalls`**. gen-rebuild does not beat `O(|cone|)` total work
 in one pure eval (v3 minimality verdict); the win only exists because a *prior* store is
 reused after a change. The pessimal boundary (a shared-node edit) recomputes everything —
-saving 0 — and is recorded honestly.
+saving 0 — and is recorded honestly. **Cross-plane (do not read Arm R against Arm C):**
+that 35,350,336-fcall saving is the SEPARATE-per-host (deploy-time / cross-eval) recompute
+of blade + cortex; the Arm-C keystone shows the SAME declaration layer is nearly free to
+share WITHIN one eval (18.8M ≈ 1.066× a single host, not the 35.35M naive sum). Different
+execution planes, not in tension — Arm R avoids the cross-eval recompute a change repeats
+host-by-host, Arm C's keystone measures the in-eval plane native memoization already shares.
 
 **Arm C — `class-share` (den s1/s2), what the counter delta MEANS.** The byte gates PASS
 (composition digest AND terminal `toplevel.drvPath` byte-identical under den@s2, all three

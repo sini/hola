@@ -81,7 +81,8 @@
           "nrThunks": 0
         }
       }
-    }
+    },
+    "crossPlaneNote": "The savedRecompute counters (35,350,336 fcalls = blade+cortex) are the SEPARATE-per-host (deploy-time / cross-eval) recompute. The class-share keystone shows the SAME declaration layer is nearly free to share WITHIN one eval (blade+cortex = 18.8M ≈ 1.066× a single host, not the 35.35M naive sum) — different execution planes, NOT in tension: Arm R saves the cross-eval recompute a change repeats host-by-host; class-share measures the in-eval plane where native Nix memoization already shares it. See MEASUREMENT.md §Arm-C reconciliation pt2."
   },
   "class-share": {
     "arm": "den s1/s2 class-share (Arm C)",

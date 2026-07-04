@@ -449,6 +449,16 @@ composition `nrFunctionCalls`** (blade + cortex skipped). The pessimal shared-no
 edit recomputes the whole cone (saving 0). As §rebuild-dedup already states, this
 is incremental reuse-ACROSS-CHANGE, not a single-eval speedup.
 
+**Cross-plane note (pre-empts the obvious objection).** This 35,350,336-fcall
+saving is the SEPARATE-per-host (deploy-time / cross-eval) recompute of blade +
+cortex — the plane where each host is evaluated in its own process across a change.
+It is the same declaration work that the Arm-C keystone (§Arm-C reconciliation pt2)
+shows is nearly FREE to share WITHIN one eval (blade + cortex = 18.8M ≈ 1.066× a
+single host, not the 35.35M naive sum). Different execution planes, not in tension:
+Arm R saves the cross-eval recompute a change would otherwise repeat host-by-host;
+Arm C's keystone measures the in-eval plane where native memoization already shares
+it. Task 9 quotes both — they are the same work seen from the two planes.
+
 ### Arm C (class-share): byte-SOUND, but NO composition win in this harness — reconciling the ~60% prior
 
 Both byte gates pass (composition digest AND terminal drvPath byte-identical under
@@ -469,10 +479,12 @@ reproduce here — reconciled, not contradicted:
    blade + cortex `compositionNames` from ONE shared `out` (both nixpkgs-master,
    pinned den) costs **18,836,571 `nrFunctionCalls`** — only **1.066×** a single
    host (blade `baseline-composition` = 17,673,112), NOT 2× (the naive per-host sum
-   is 35,350,336). Native Nix thunk memoization already collapses the shared
-   option-declaration tree in-process, so there is nothing there for s2 to dedup;
-   its win lives one layer down, in config RESOLUTION. Reproduce (from the repo
-   root):
+   is 35,350,336 — which is exactly Arm R's separate-per-host saving in
+   §rebuild-dedup: the same declaration work on the cross-eval plane, where it is
+   NOT free, is what gen-rebuild avoids re-running host-by-host across a change).
+   Native Nix thunk memoization already collapses the shared option-declaration tree
+   in-process, so there is nothing there for s2 to dedup; its win lives one layer
+   down, in config RESOLUTION. Reproduce (from the repo root):
 
    ```sh
    NIX_SHOW_STATS=1 NIX_SHOW_STATS_PATH=/tmp/keystone.json nix eval --impure --raw --expr '

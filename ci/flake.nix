@@ -11,9 +11,11 @@
     den.url = "github:denful/den";
     import-tree.url = "github:vic/import-tree";
     nix-config.url = "github:sini/nix-config";
-    # Arm R (rebuild-dedup, Task 7): the incremental rebuilder. Locked for provenance; the measured
-    # arm expr getFlakes the pinned rev (7a87691) inline (self-contained, --impure), so the lock and
-    # the arm's pin must agree (MEASUREMENT.md §rebuild-dedup). nixpkgs-lib-free — no nixpkgs input.
+    # Arm R (rebuild-dedup, Task 7): the incremental rebuilder. AUTHORITATIVE pin = the getFlake rev
+    # INSIDE the rebuild-dedup arm expr (ci/bench/arms.json); THIS input is provenance-only (locking +
+    # `nix flake` visibility) — the measured run getFlakes its own rev under --impure and never reads
+    # this input. So bump BOTH sites or NEITHER (same dual-site rule as the den-s2 rev, pinned only in
+    # the class-share arm expr). nixpkgs-lib-free — no nixpkgs input.
     gen-rebuild.url = "github:sini/gen-rebuild/7a87691f004679668852d53fc130a57bc305e20a";
   };
   outputs =
