@@ -73,6 +73,36 @@ let
   # the engine module against baseLib (no engine change — the module is `{ lib }:`-shaped).
   fleetEngineLib = baseLib: (import ./engine { lib = baseLib; }).engine.lib;
 
+  # baseline-composition witness (A1 — MEASUREMENT.md §baseline-composition): a DERIVATION-FREE
+  # structure walk of a fleet cfg's merged option tree. Forcing it runs den's aspect resolution + the
+  # full module-system declaration merge (which modules apply, their option surface) but stops before
+  # value realization: it prunes option/type nodes (`_type`) and derivations (`type == "derivation"`)
+  # at WHNF, so no leaf value and no drvPath is ever forced. It therefore completes deterministically,
+  # unlike a `cfg.config` walk (agenix-rekey secrets + structured systemd/quirk accessors throw on
+  # coercion, so a config deepSeq measures only "work up to the first throw"). Spec expression is
+  # verbatim from MEASUREMENT.md.
+  compositionWalk =
+    x:
+    if !(builtins.isAttrs x) then
+      null
+    else if (x._type or null) != null then
+      null # stop AT each option node
+    else if (x.type or null) == "derivation" then
+      null # never force a drvPath
+    else
+      builtins.deepSeq (builtins.map compositionWalk (builtins.attrValues x)) (builtins.attrNames x);
+
+  # The walk's OUTPUT: the merged option tree's top-level attr-name list, returned only after the full
+  # recursive walk has been deep-forced. A per-host structural fingerprint — hash this for the
+  # composition arm's parity digest (it changes iff the declared top-level option set changes, so a
+  # resolution-only optimization like the class-share arm must leave it byte-identical).
+  compositionNames = cfg: compositionWalk cfg.options;
+
+  # Spec-exact witness: force the whole walk, yield `true`. This is the value the composition arm's
+  # counter capture forces (matches MEASUREMENT.md's 1-host anchor). The stat driver hashes
+  # `compositionNames` for the digest column; both do the identical walk.
+  compositionWitness = cfg: builtins.deepSeq (compositionNames cfg) true;
+
   # Fleet tier (gate="drvPath"): re-invoke nix-config's RAW outputs with the host's channel input's
   # .lib replaced by `doctor channelLib`, + the lazy outPath-carrying self-knot. Pure: a declared
   # flake input exposes .inputs/.outPath. `self` is the ONE input getFlake omits and the toplevel both
@@ -109,5 +139,8 @@ in
     runDenTemplate
     fleetEngineLib
     runDenFleet
+    compositionWalk
+    compositionNames
+    compositionWitness
     ;
 }

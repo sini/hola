@@ -1,0 +1,12 @@
+{
+  "baseline-composition": {
+    "expr": "builtins.hashString \"sha256\" (builtins.toJSON (hola.adapter.compositionNames cfg))",
+    "raw": true,
+    "nixArgs": []
+  },
+  "baseline-toplevel": {
+    "expr": "cfg.config.system.build.toplevel.drvPath",
+    "raw": true,
+    "nixArgs": []
+  }
+}

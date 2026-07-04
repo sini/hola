@@ -12,9 +12,14 @@
     let
       holaSrc = ../.; # hola repo root
       nixpkgsSrc = inputs.nixpkgs; # ci flake's pinned nixpkgs (package-free lib path + floor)
+      # extraEnv: name→value strings baked as `export name="value"` after the two common vars, for
+      # scripts that need more baked context (fleet-stats bakes the pinned nix-config store path).
       mkBench =
-        name: extraInputs: scriptFile:
+        name: extraInputs: extraEnv: scriptFile:
         let
+          envLines = pkgs.lib.concatStringsSep "\n" (
+            pkgs.lib.mapAttrsToList (k: v: ''export ${k}="${v}"'') extraEnv
+          );
           app = pkgs.writeShellApplication {
             inherit name;
             runtimeInputs = [
@@ -25,6 +30,7 @@
             text = ''
               export HOLA_SRC="${holaSrc}"
               export NIXPKGS="${nixpkgsSrc}"
+              ${envLines}
               ${builtins.readFile scriptFile}
             '';
           };
@@ -35,10 +41,15 @@
         };
     in
     {
-      apps.stat-capture = mkBench "stat-capture" [ ] ./bench/stat-capture.sh;
-      apps.scaling-curve = mkBench "scaling-curve" [ ] ./bench/scaling-curve.sh;
-      apps.floor-decomp = mkBench "floor-decomp" [ ] ./bench/floor-decomp.sh;
-      apps.parity-report = mkBench "parity-report" [ pkgs.hyperfine ] ./bench/parity-report.sh;
-      apps.vendor-check = mkBench "vendor-check" [ ] ./bench/vendor-check.sh;
+      apps.stat-capture = mkBench "stat-capture" [ ] { } ./bench/stat-capture.sh;
+      apps.scaling-curve = mkBench "scaling-curve" [ ] { } ./bench/scaling-curve.sh;
+      apps.floor-decomp = mkBench "floor-decomp" [ ] { } ./bench/floor-decomp.sh;
+      apps.parity-report = mkBench "parity-report" [ pkgs.hyperfine ] { } ./bench/parity-report.sh;
+      apps.vendor-check = mkBench "vendor-check" [ ] { } ./bench/vendor-check.sh;
+      # Fleet tier: bakes the ci-pinned nix-config source (getFlake'd back to a flake value in the
+      # driver — the shell equivalent of the parity test's specialArgs `denFleet.nixConfig`).
+      apps.fleet-stats = mkBench "fleet-stats" [ ] {
+        HOLA_FLEET_NIXCONFIG = "${inputs.nix-config}";
+      } ./bench/fleet-stats.sh;
     };
 }
