@@ -381,3 +381,84 @@ the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
    the load-bearing arithmetic (saving = Σ skipped-host baseline composition; delta =
    `s2 − pinned`; both byte gates). Re-run on the same nix version must reproduce every
    deterministic counter + digest exactly — if not, **STOP and report, do not average.**
+
+## class-share-realization — the shared-eval class-share arm (`class-share-realization.json`)
+
+`class-share-realization.json` is the Task-7b companion. It measures the class-share win
+in its ACTUAL scope, which Task 7's `class-share` arm (declaration-layer, separate-per-host)
+structurally cannot see. Read this before the numbers — the scope is everything.
+
+**What it measures (honest scope).** REALIZATION-level, SHARED-process, projection-scoped,
+**N=2-member class**. The instantiate pattern: force a class archetype's projection once,
+INJECT its byte-identical shared core into a member (fixed-input config-merge), pay only the
+member's delta. On the real 2-member class **{blade, cortex}** (both master channel;
+archetype = blade; projection = `systemd.units`), the **212-unit byte-identical shared core**
+(76% of cortex's 278 units) injects BYTE-IDENTICALLY and saves the per-added-member (cortex)
+**~1.6% `nrFunctionCalls` / ~0.18% `//`-copies**. It is a genuine but SMALL win, and small for
+a structural reason: `systemd.units` VALUE realization is only **~2% of a member's eval**; the
+host-specific config-resolution SPINE (~98%) dominates and config-merge does not share it across
+genuinely-distinct hosts. This is **NOT** a toplevel claim (config-merge reassembles a consumed
+projection, never a per-host toplevel) and **NOT** 1:1 comparable to the synth 96-host
+1.89×–4.38× priors (`priorContext` in the JSON): those measured HOMOGENEOUS `extendModules`-variant
+members sharing the config spine, plus `system.path`'s expensive class-invariant leaf —
+`system.path` is NOT class-invariant across these heterogeneous reals (`systemPathUnsound`), so
+its big win is unsound here. See [`../MEASUREMENT.md`](../MEASUREMENT.md) §"Task 7b".
+
+**The three forces (nix 2.34.7, ×2 reps, STOP-on-diff):**
+
+| force | units | nrFunctionCalls | //-copies | digest |
+|---|---:|---:|---:|---|
+| archetype (blade full — forced once, paid in both modes) | 257 | 41,296,723 | 100,738,064 | `f9ac1333…` |
+| reconstruct (cortex full — vanilla) | 278 | 46,261,629 | 109,715,177 | `5aefc0b2…` |
+| inject (cortex delta — shared core from archetype) | 66 | 45,528,833 | 109,519,756 | `f79a7517…` |
+| **per-added-member saving** (reconstruct − inject) | — | **732,796 (1.6%)** | **195,421 (0.18%)** | — |
+
+Byte gate: injected `== ` real (`injectedDigest == realDigest == 5aefc0b2…`, the reconstruct
+digest), 212-unit core — a mismatch is an unsound-sharing bug, a hard fail in the script.
+`realizationPlaneNativeShare` (informational): both hosts' units from one `out` = 65,193,248
+fcalls ≈ **1.49× a single host** (vs the declaration keystone's 1.066×) — the third plane in
+MEASUREMENT.md's cross-plane note.
+
+### How to reproduce
+
+The deterministic counters + digests reproduce bit-for-bit per nix version (same discipline as
+`g6-split.json`). One self-contained driver measures + byte-gates + emits `facts.json`; the jq
+below computes the load-bearing arithmetic; the committed JSON carries the full framing/notes.
+
+1. Measure (runs the oracle, the three forces ×2 with STOP-on-diff, the byte gate, the
+   `system.path` soundness check, and the informational native-share probe). Green ⇒ the byte
+   gate held and every deterministic counter reproduced across the two reps:
+
+   ```sh
+   cd ~/Documents/repos/hola
+   bash ci/bench/class-share-realization.sh --out /tmp/csr    # ~5–6 min; ulimit -s unlimited is set inside
+   ```
+
+1. Load-bearing arithmetic from `facts.json` (saving = reconstruct − inject; fractions; the
+   native-share ratio; the byte gate). Every number below is jq-derived from the measured facts;
+   the committed `class-share-realization.json` adds the pins, `priorContext`, and prose framing:
+
+   ```sh
+   jq '
+     ["nrFunctionCalls","nrPrimOpCalls","nrOpUpdateValuesCopied","nrThunks"] as $C
+     | .counters.reconstruct.counters as $R | .counters.inject.counters as $I
+     | .counters.archetype.counters as $A | .realizationPlaneNativeShare.counters as $NS
+     | { byteGateHolds: .byteGate.gate,
+         systemPathClassInvariant: .systemPath.classInvariant,
+         sharedCore: { byteIdenticalShared: .class.byteIdenticalShared,
+                       sharedFractionOfMember: (.class.byteIdenticalShared / .class.memberUnits) },
+         perAddedMemberSaving: ($C | map({(.): ($R[.] - $I[.])}) | add),
+         savingFractionOfReconstruct: ($C | map({(.): (($R[.] - $I[.]) / $R[.])}) | add),
+         realizationPlaneRatioVsSingleHost: ($NS.nrFunctionCalls / (($A.nrFunctionCalls + $R.nrFunctionCalls) / 2)) }
+   ' /tmp/csr/facts.json
+   ```
+
+   Re-run on the same nix version must reproduce every deterministic counter + digest exactly —
+   if not, **STOP and report, do not average.** (`gcTotalBytes`/`cpuTime` are informational and
+   are not emitted to `facts.json`.)
+
+**Class-topology note.** This arm's class is the ad-hoc pair {blade, cortex} (master channel).
+A host/channel addition to the fleet does not automatically enter this arm — the pair and
+archetype are pinned in `ci/bench/class-share-realization.sh` (`ARCH`/`MEMBER`/`CHAN`); a genuine
+near-homogeneous class (Option B, e.g. axon nodes) is the natural follow-up and would be a new
+archetype/member pin plus a re-baseline.
