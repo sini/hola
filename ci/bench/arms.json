@@ -1,4 +1,5 @@
 {
+  "_contract": "Each arm's `expr` is a projection over the fixed driver preamble bindings `nixConfig hola lib host channelInput cfg` (see ci/bench/fleet-stats.sh header + ci/bench/MEASUREMENT.md for the full contract). Keys prefixed with `_` are manifest metadata, not arms.",
   "baseline-composition": {
     "expr": "builtins.hashString \"sha256\" (builtins.toJSON (hola.adapter.compositionNames cfg))",
     "raw": true,

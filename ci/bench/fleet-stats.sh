@@ -22,6 +22,8 @@
 # Results (results.csv + summary.md) are written to a temp dir by default and are NOT committed —
 # they are Task 6's baselines. `--out DIR` pins a location.
 
+set -euo pipefail
+
 usage() {
   cat >&2 <<'EOF'
 usage: fleet-stats [--hosts a,b] [--arms x,y] [--reps N] [--manifest PATH] [--out DIR]
@@ -92,9 +94,14 @@ done
   echo "fleet-stats: manifest not found: $MANIFEST" >&2
   exit 2
 }
+[[ "$REPS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "fleet-stats: --reps must be a positive integer (got '$REPS')" >&2
+  exit 2
+}
 
-# Every manifest key must be canonical — reject an unknown/typo'd arm loudly, up front.
-mapfile -t MANIFEST_ARMS < <(jq -r 'keys[]' "$MANIFEST")
+# Every arm key must be canonical — reject an unknown/typo'd arm loudly, up front. Underscore-prefixed
+# keys (e.g. `_contract`) are manifest metadata, not arms, so they are skipped here and everywhere.
+mapfile -t MANIFEST_ARMS < <(jq -r 'keys[] | select(startswith("_") | not)' "$MANIFEST")
 for a in "${MANIFEST_ARMS[@]}"; do
   ok=0
   for c in "${CANONICAL_ARMS[@]}"; do [[ "$a" == "$c" ]] && ok=1; done
@@ -114,7 +121,9 @@ for h in "${HOSTS[@]}"; do
   }
 done
 for a in "${ARMS[@]}"; do
-  jq -e --arg a "$a" 'has($a)' "$MANIFEST" >/dev/null || {
+  ok=0
+  for m in "${MANIFEST_ARMS[@]}"; do [[ "$a" == "$m" ]] && ok=1; done
+  [[ $ok -eq 1 ]] || {
     echo "fleet-stats: unknown arm '$a' (manifest: ${MANIFEST_ARMS[*]})" >&2
     exit 2
   }
@@ -155,7 +164,7 @@ run_cell() {
   local host="$1" arm="$2"
   local chan="${CHANNEL[$host]}"
   local armExpr raw
-  armExpr="$(jq -r --arg a "$arm" '.[$a].expr' "$MANIFEST")"
+  armExpr="$(jq -r --arg a "$arm" '.[$a].expr // error("arm \($a): missing expr")' "$MANIFEST")"
   raw="$(jq -r --arg a "$arm" '.[$a].raw // true' "$MANIFEST")"
   local nixArgs=()
   mapfile -t nixArgs < <(jq -r --arg a "$arm" '.[$a].nixArgs // [] | .[]' "$MANIFEST")

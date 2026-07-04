@@ -98,9 +98,12 @@ let
   # resolution-only optimization like the class-share arm must leave it byte-identical).
   compositionNames = cfg: compositionWalk cfg.options;
 
-  # Spec-exact witness: force the whole walk, yield `true`. This is the value the composition arm's
-  # counter capture forces (matches MEASUREMENT.md's 1-host anchor). The stat driver hashes
-  # `compositionNames` for the digest column; both do the identical walk.
+  # Spec-exact witness: force the whole walk, yield `true` (MEASUREMENT.md's standalone recipe
+  # references it). The stat driver's composition arm does NOT force this expression — it forces
+  # `hashString (toJSON (compositionNames cfg))`, i.e. the SAME walk plus a toJSON+hash of the small
+  # top-level name list for the digest column. Not the identical expression, but the added toJSON/hash
+  # is negligible: measured at fleet scale the arm's nrFunctionCalls / nrPrimOpCalls match this
+  # witness's 1-host anchor to the digit.
   compositionWitness = cfg: builtins.deepSeq (compositionNames cfg) true;
 
   # Fleet tier (gate="drvPath"): re-invoke nix-config's RAW outputs with the host's channel input's
