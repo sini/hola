@@ -1,5 +1,5 @@
 {
-  "_contract": "Each arm's `expr` is a projection over the fixed driver preamble bindings `nixConfig hola lib host channelInput cfg` (see ci/bench/fleet-stats.sh header + ci/bench/MEASUREMENT.md for the full contract). Keys prefixed with `_` are manifest metadata, not arms.",
+  "_contract": "Each arm's `expr` is a projection over the fixed driver preamble bindings `nixConfig hola lib host channelInput cfg` (see ci/bench/fleet-stats.sh header + ci/bench/MEASUREMENT.md for the full contract). Keys prefixed with `_` are manifest metadata, not arms. The two dedup arms (Task 7) are SELF-CONTAINED — they ignore the preamble `cfg` and getFlake their own pinned inputs (--impure): `class-share` rebuilds cfg with `nc.inputs.den` overridden to den@s2 (feat/s2-pipe-reads 487cc671) and forces the composition witness under it (per-host; its digest MUST equal the baseline-composition digest — a resolution-only optimization cannot move declarations); `rebuild-dedup` builds the gen-rebuild fleet graph (gen-rebuild 7a87691), asserts resultEqualsFullRebuild + coneOnlyRecompute on the REAL corpus, and is fleet-WIDE (fixed editHost, identical for every host binding — run it at ONE host).",
   "baseline-composition": {
     "expr": "builtins.hashString \"sha256\" (builtins.toJSON (hola.adapter.compositionNames cfg))",
     "raw": true,
@@ -7,6 +7,16 @@
   },
   "baseline-toplevel": {
     "expr": "cfg.config.system.build.toplevel.drvPath",
+    "raw": true,
+    "nixArgs": []
+  },
+  "class-share": {
+    "expr": "let denS2 = builtins.getFlake \"git+file:///home/sini/Documents/repos/den?ref=feat/s2-pipe-reads&rev=487cc671e87982ad04bca69fb9a5723c85ed22ca\"; ncS2 = nixConfig // { inputs = nixConfig.inputs // { den = denS2; }; }; cfgS2 = hola.adapter.runDenFleet (l: l) (hola.corpus.denFleet.mk { nixConfig = ncS2; inherit host channelInput; }); in builtins.hashString \"sha256\" (builtins.toJSON (hola.adapter.compositionNames cfgS2))",
+    "raw": true,
+    "nixArgs": []
+  },
+  "rebuild-dedup": {
+    "expr": "let genRebuild = (builtins.getFlake \"github:sini/gen-rebuild/7a87691f004679668852d53fc130a57bc305e20a\").lib; channelOf = { bitstream = \"nixpkgs-unstable\"; blade = \"nixpkgs-master\"; cortex = \"nixpkgs-master\"; }; hosts = [ \"bitstream\" \"blade\" \"cortex\" ]; compFor = h: hola.adapter.compositionNames (hola.adapter.runDenFleet (l: l) (hola.corpus.denFleet.mk { inherit nixConfig; host = h; channelInput = channelOf.${h}; })); r = hola.adapter.fleetRebuildSoundness { inherit genRebuild compFor hosts; editHost = \"bitstream\"; }; in if r.resultEqualsFullRebuild && r.coneOnlyRecompute then builtins.hashString \"sha256\" (builtins.toJSON r) else throw \"rebuild-dedup soundness FAILED: ${builtins.toJSON r}\"",
     "raw": true,
     "nixArgs": []
   }

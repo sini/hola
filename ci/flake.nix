@@ -11,6 +11,10 @@
     den.url = "github:denful/den";
     import-tree.url = "github:vic/import-tree";
     nix-config.url = "github:sini/nix-config";
+    # Arm R (rebuild-dedup, Task 7): the incremental rebuilder. Locked for provenance; the measured
+    # arm expr getFlakes the pinned rev (7a87691) inline (self-contained, --impure), so the lock and
+    # the arm's pin must agree (MEASUREMENT.md §rebuild-dedup). nixpkgs-lib-free — no nixpkgs input.
+    gen-rebuild.url = "github:sini/gen-rebuild/7a87691f004679668852d53fc130a57bc305e20a";
   };
   outputs =
     inputs@{ gen, nixpkgs, ... }:

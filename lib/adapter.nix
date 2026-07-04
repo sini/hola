@@ -106,6 +106,111 @@ let
   # witness's 1-host anchor to the digit.
   compositionWitness = cfg: builtins.deepSeq (compositionNames cfg) true;
 
+  # Arm R (rebuild-dedup — MEASUREMENT.md §rebuild-dedup): model the fleet as a gen-rebuild graph and
+  # re-assert gen-rebuild's soundness oracle on the REAL corpus. Nodes = a shared class-composition
+  # producer + the fleet hosts; edge host→shared (each host depends on the shared composition, gen-graph
+  # convention `edges id = deps of id`). `recompute host` forces the host's REAL compositionNames (the
+  # expensive per-host work) folded with the node's data + the shared value, so a localized single-host
+  # DATA edit moves only that host's hash (cone = {host}) while a shared-node edit moves all (pessimal).
+  #
+  # `genRebuild` is INJECTED (the demo's `{ genRebuild }` pattern) — hola's lib stays gen-rebuild-free
+  # (no import), so this adds no dependency; the caller getFlakes the pinned gen-rebuild and passes .lib.
+  # `compFor host` is the caller-supplied composition witness (`compositionNames (runDenFleet … host)`),
+  # kept a param so this helper never reaches into the corpus module.
+  #
+  # Returns the demo's soundness record on the real graph: `resultEqualsFullRebuild` (THE byte gate —
+  # propagateEager's store == a from-scratch build with the same edit) + `coneOnlyRecompute` (a POISONED
+  # recompute that throws on the untouched hosts proves they are never re-evaluated) + the cone/untouched
+  # partition. The dedup WIN is reuse-ACROSS-CHANGE: a single-host edit skips the untouched hosts' evals;
+  # its counter value = Σ of the skipped hosts' baseline-composition counters (arithmetic on the Task-6
+  # baseline, NOT a single-eval speedup — gen-rebuild does not beat O(|cone|) in one pure eval).
+  fleetRebuildSoundness =
+    {
+      genRebuild,
+      compFor,
+      hosts,
+      editHost,
+    }:
+    let
+      inherit (genRebuild) build propagateEager dirtySet;
+      hashOf = v: builtins.hashString "sha256" (builtins.toJSON v);
+      nodeIds = [ "shared" ] ++ hosts;
+      mkAcc = nodeDataMap: edgesMap: {
+        nodes = nodeIds;
+        edges = id: edgesMap.${id} or [ ];
+        nodeData = id: nodeDataMap.${id} or { };
+        parent = _id: null;
+      };
+      baseData = builtins.listToAttrs (
+        map (id: {
+          name = id;
+          value = {
+            rev = "base";
+          };
+        }) nodeIds
+      );
+      fleetEdges = {
+        shared = [ ];
+      }
+      // builtins.listToAttrs (
+        map (h: {
+          name = h;
+          value = [ "shared" ];
+        }) hosts
+      );
+      fleet = mkAcc baseData fleetEdges;
+      # recompute: the shared node hashes only its data; a host folds its REAL composition with its data
+      # and the shared value (so the shared node is a genuine dependency for the pessimal case).
+      recompute =
+        acc: s: id:
+        if id == "shared" then
+          hashOf (acc.nodeData id)
+        else
+          hashOf {
+            host = id;
+            comp = compFor id;
+            data = acc.nodeData id;
+            shared = s.shared;
+          };
+
+      ctx = build {
+        accessor = fleet;
+        inherit recompute hashOf;
+      };
+      newDecls = {
+        rev = "edited";
+      };
+      overridden = propagateEager ctx { ${editHost} = newDecls; };
+
+      # Ground truth: a full from-scratch build with editHost's data replaced.
+      fleet' = fleet // {
+        nodeData = id: if id == editHost then newDecls else fleet.nodeData id;
+      };
+      fullRebuild = build {
+        accessor = fleet';
+        inherit recompute hashOf;
+      };
+
+      cone = dirtySet ctx [ editHost ];
+      untouched = builtins.filter (id: !(builtins.elem id cone)) fleet.nodes;
+      # Poisoned recompute: throws on the untouched hosts. propagateEager splices their prior values and
+      # must never call recompute on them, so it succeeds; the asymmetry proves cone-only recompute
+      # WITHOUT forcing the untouched compositions.
+      poison =
+        acc: s: id:
+        if builtins.elem id untouched then throw "POISON: ${id} recomputed" else recompute acc s id;
+      overrideWithPoison = propagateEager (ctx // { recompute = poison; }) { ${editHost} = newDecls; };
+    in
+    {
+      editHost = editHost;
+      recomputedCone = builtins.sort builtins.lessThan cone;
+      untouchedNodes = builtins.sort builtins.lessThan untouched;
+      # THE byte gate: incremental store == from-scratch build with the edit applied.
+      resultEqualsFullRebuild = overridden.store == fullRebuild.store;
+      untouchedReused = builtins.all (id: overridden.store.${id} == ctx.store.${id}) untouched;
+      coneOnlyRecompute = (builtins.tryEval (builtins.deepSeq overrideWithPoison.store true)).success;
+    };
+
   # Fleet tier (gate="drvPath"): re-invoke nix-config's RAW outputs with the host's channel input's
   # .lib replaced by `doctor channelLib`, + the lazy outPath-carrying self-knot. Pure: a declared
   # flake input exposes .inputs/.outPath. `self` is the ONE input getFlake omits and the toplevel both
@@ -145,5 +250,6 @@ in
     compositionWalk
     compositionNames
     compositionWitness
+    fleetRebuildSoundness
     ;
 }
