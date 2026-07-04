@@ -162,6 +162,10 @@ nothing is hand-typed.
    nix run ./ci#fleet-stats -- --out /tmp/g6   # defaults: 3 hosts × 2 baseline arms × 3 reps
    ```
 
+   Expected runtime ~5–7 min for the full 3×2×3 default (18 evals); the
+   `baseline-toplevel` arm dominates and scales with host size — cortex's is
+   ~35 s/rep, bitstream's ~15 s.
+
 1. Regenerate `g6-split.json` from that CSV. `PINS` is the input-rev block (not a
    measured number); every counter/digest/ratio is computed by the `jq` program from
    the CSV. The four evaluator counters are exact-pinned; `gcTotalBytes` is carried
@@ -177,7 +181,8 @@ nothing is hand-typed.
      "nixpkgs-master-channel":"5e8ca42db8804dbe70af4d4d3fcd1c71e8409e60",
      "den":"5df0987658d6e44268abba953406480e9f066928",
      "_hola_note":"harness rev (fleet-stats driver + compositionWalk witness) that generated these counters. MEASUREMENT.md'"'"'s pin table lists de5b21d as the doc-time hola rev; the driver landed in the 5 commits after de5b21d, so the baseline is generated at HEAD 5b88004.",
-     "_dedup_arm_pins":"gen-rebuild 7a87691 (Arm R) and den s1 b3449c8 / s2 487cc671 (Arm C) are Task 7 pins, unused by the G6 baseline arms — see MEASUREMENT.md pin table."
+     "_dedup_arm_pins":"gen-rebuild 7a87691 (Arm R) and den s1 b3449c8 / s2 487cc671 (Arm C) are Task 7 pins, unused by the G6 baseline arms — see MEASUREMENT.md pin table.",
+     "_meta":"underscore-prefixed keys in .pins are prose annotations, not revs; consumers skip them."
    }'
    jq -R -s --argjson pins "$PINS" '
      def counters: ["nrFunctionCalls","nrPrimOpCalls","nrOpUpdateValuesCopied","nrThunks"];
@@ -198,13 +203,13 @@ nothing is hand-typed.
          | from_entries ) as $hosts
      | ( ["baseline-composition","baseline-toplevel"]
          | map(. as $arm
-             | { ($arm): (counters
-                 | map(. as $c | { ($c): ([ $rows[] | select(.arm == $arm) | .counters[$c] ] | add) })
-                 | add) })
-         | add ) as $fleetCounters
-     | ( ["baseline-composition","baseline-toplevel"]
-         | map(. as $arm | { ($arm): ([ $rows[] | select(.arm == $arm) | .gcTotalBytes ] | add) })
-         | add ) as $fleetGc
+             | { ($arm): {
+                   counters: (counters
+                     | map(. as $c | { ($c): ([ $rows[] | select(.arm == $arm) | .counters[$c] ] | add) })
+                     | add),
+                   gcTotalBytesInformational: ([ $rows[] | select(.arm == $arm) | .gcTotalBytes ] | add)
+                 } })
+         | add ) as $fleet
      | ( $hosts | to_entries
          | map({ key: .key,
                  value: rat(.value["baseline-composition"].counters;
@@ -221,11 +226,11 @@ nothing is hand-typed.
          pinNote: "EXACT-pinned (deterministic per nix version, verified reproduced across two full runs): the 4 evaluator counters (nrFunctionCalls, nrPrimOpCalls, nrOpUpdateValuesCopied, nrThunks) + both digests. INFORMATIONAL (recorded, NOT exact-gated): gcTotalBytes — Boehm total-allocation, drifts ~1e-6..1e-5 run-to-run; and cpuTime (machine-dependent, not carried in this file). Ratios are computed over the exact counters; the gc ratio is informational/approximate.",
          framing: "composition and terminal are two NON-NESTED projections of the same cfg: the baseline-composition witness deepSeqs ALL declared options; the baseline-toplevel force reaches only the build.toplevel cone plus the derivation-construction storm. ratios below compare the two projections — they are NOT a part/whole share of the terminal'"'"'s own composition work.",
          digestNote: "baseline-composition digest = sha256 of the merged option tree'"'"'s top-level attr-name list (coarse, structural — changes iff the declared top-level option set changes). baseline-toplevel digest = the exact system.build.toplevel drvPath.",
-         pins: $pins, hosts: $hosts, fleet: { counters: $fleetCounters, gcTotalBytesInformational: $fleetGc },
+         pins: $pins, hosts: $hosts, fleet: $fleet,
          ratios: { note: "composition / terminal, per EXACT counter; derived from hosts[*] and fleet counters by the generation command — not hand-typed.",
-                   perHost: $hostRatios, fleet: rat($fleetCounters["baseline-composition"]; $fleetCounters["baseline-toplevel"]),
+                   perHost: $hostRatios, fleet: rat($fleet["baseline-composition"].counters; $fleet["baseline-toplevel"].counters),
                    gcTotalBytesInformational: { note: "gc bytes is NOT exact-pinned (Boehm noise ~1e-6..1e-5 run-to-run); this ratio is approximate, from the recorded run.",
-                                                perHost: $hostGcRatios, fleet: ($fleetGc["baseline-composition"] / $fleetGc["baseline-toplevel"]) } } }
+                                                perHost: $hostGcRatios, fleet: ($fleet["baseline-composition"].gcTotalBytesInformational / $fleet["baseline-toplevel"].gcTotalBytesInformational) } } }
    ' /tmp/g6/results.csv > ci/bench/baselines/g6-split.json
    ```
 

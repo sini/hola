@@ -18,7 +18,8 @@
     "nixpkgs-master-channel": "5e8ca42db8804dbe70af4d4d3fcd1c71e8409e60",
     "den": "5df0987658d6e44268abba953406480e9f066928",
     "_hola_note": "harness rev (fleet-stats driver + compositionWalk witness) that generated these counters. MEASUREMENT.md's pin table lists de5b21d as the doc-time hola rev; the driver landed in the 5 commits after de5b21d, so the baseline is generated at HEAD 5b88004.",
-    "_dedup_arm_pins": "gen-rebuild 7a87691 (Arm R) and den s1 b3449c8 / s2 487cc671 (Arm C) are Task 7 pins, unused by the G6 baseline arms — see MEASUREMENT.md pin table."
+    "_dedup_arm_pins": "gen-rebuild 7a87691 (Arm R) and den s1 b3449c8 / s2 487cc671 (Arm C) are Task 7 pins, unused by the G6 baseline arms — see MEASUREMENT.md pin table.",
+    "_meta": "underscore-prefixed keys in .pins are prose annotations, not revs; consumers skip them."
   },
   "hosts": {
     "bitstream": {
@@ -92,23 +93,23 @@
     }
   },
   "fleet": {
-    "counters": {
-      "baseline-composition": {
+    "baseline-composition": {
+      "counters": {
         "nrFunctionCalls": 52984408,
         "nrPrimOpCalls": 14713268,
         "nrOpUpdateValuesCopied": 12662019,
         "nrThunks": 59716291
       },
-      "baseline-toplevel": {
+      "gcTotalBytesInformational": 3993426976
+    },
+    "baseline-toplevel": {
+      "counters": {
         "nrFunctionCalls": 124755494,
         "nrPrimOpCalls": 49911074,
         "nrOpUpdateValuesCopied": 241947508,
         "nrThunks": 184410843
-      }
-    },
-    "gcTotalBytesInformational": {
-      "baseline-composition": 3993426976,
-      "baseline-toplevel": 18778174400
+      },
+      "gcTotalBytesInformational": 18778174400
     }
   },
   "ratios": {

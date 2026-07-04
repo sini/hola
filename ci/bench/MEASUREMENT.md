@@ -27,14 +27,13 @@ both digests are bit-reproducible per nix version — verified **identical acros
 full fleet runs** (bitstream/blade/cortex × both baseline arms, nix 2.34.7): they
 are the **exact-pinnable** set. `gc.totalBytes` is **recorded-only** — a Boehm
 total-allocation number, not an evaluator counter, which drifted **~1e-6..1e-5
-relative** between those same two runs (a few KB on multi-GB totals, e.g. bitstream
-composition 1,327,464,832 → 1,327,466,160; blade toplevel 7,317,612,304 →
-7,317,605,776) — so it is noise-banded and **never exact-gated**; `cpuTime` is
-likewise recorded-only (machine-dependent). Baselines therefore exact-pin only the
-deterministic set; `gc.totalBytes` / `cpuTime` may feed FLOOR or RATIO gates with
-explicit headroom, never an equality check. See
-`ci/bench/baselines/README.md` §"What is pinned / not pinned" for the per-cell
-evidence table and the Task 8 gate policy.
+relative** between those same two runs (a few KB on multi-GB totals) — so it is
+noise-banded and **never exact-gated**; `cpuTime` is likewise recorded-only
+(machine-dependent). Baselines therefore exact-pin only the deterministic set;
+`gc.totalBytes` / `cpuTime` may feed FLOOR or RATIO gates with explicit headroom,
+never an equality check. See `ci/bench/baselines/README.md` §"What is pinned / not
+pinned" for the per-cell evidence (the exact drift figures) and the Task 8 gate
+policy.
 
 ## Pinned revisions
 
