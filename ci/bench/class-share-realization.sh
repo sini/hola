@@ -93,29 +93,44 @@ let
 EOF
 }
 
+# Run a SETUP eval loudly: stderr to a named .err, and on any failure tail it and exit 1 with a named
+# message (never a silent set -e death — the counter cells use the same pattern in measure()). Echoes
+# the eval's stdout so callers can capture it; the guard runs BEFORE any assignment consumes the output.
+setup_eval() {
+  local name="$1"
+  shift
+  local err="$tmp/setup-$name.err" out
+  if ! out="$("$@" 2>"$err")"; then
+    echo "class-share-realization: setup eval FAILED ($name)" >&2
+    tail -8 "$err" >&2
+    exit 1
+  fi
+  printf '%s' "$out"
+}
+
 # ── step 1: the shared-core ORACLE ────────────────────────────────────────────────────────────────
 # sharedKeys = the byte-identical systemd.units intersection between archetype and member. This forces
 # both hosts (setup, not a counter cell); it is the ground truth the byte gate re-asserts and the class
 # boundary a real den-hoag build would instead DECLARE structurally. Sorted ⇒ deterministic digest.
 echo "class-share-realization: oracle — byte-identical shared systemd.units core ($ARCH ∩ $MEMBER)" >&2
-nix eval --impure --json --expr "$(preamble)
+oracleExpr="$(preamble)
   a = (cfgOf \"$ARCH\").config.systemd.units;
   m = (cfgOf \"$MEMBER\").config.systemd.units;
   common = builtins.filter (k: builtins.elem k (builtins.attrNames m)) (builtins.attrNames a);
-in builtins.sort builtins.lessThan (builtins.filter (k: builtins.toJSON a.\${k} == builtins.toJSON m.\${k}) common)" \
-  2>/dev/null >"$SHARED"
-archUnits=$(nix eval --impure --raw --expr "$(preamble) in toString (builtins.length (builtins.attrNames (cfgOf \"$ARCH\").config.systemd.units))" 2>/dev/null)
-memberUnits=$(nix eval --impure --raw --expr "$(preamble) in toString (builtins.length (builtins.attrNames (cfgOf \"$MEMBER\").config.systemd.units))" 2>/dev/null)
+in builtins.sort builtins.lessThan (builtins.filter (k: builtins.toJSON a.\${k} == builtins.toJSON m.\${k}) common)"
+setup_eval oracle nix eval --impure --json --expr "$oracleExpr" >"$SHARED"
+archUnits=$(setup_eval archUnits nix eval --impure --raw --expr "$(preamble) in toString (builtins.length (builtins.attrNames (cfgOf \"$ARCH\").config.systemd.units))")
+memberUnits=$(setup_eval memberUnits nix eval --impure --raw --expr "$(preamble) in toString (builtins.length (builtins.attrNames (cfgOf \"$MEMBER\").config.systemd.units))")
 sharedCount=$(jq 'length' "$SHARED")
 sharedDigest=$(jq -c . "$SHARED" | sha256sum | awk '{print $1}')
 echo "  archetype($ARCH)=$archUnits units, member($MEMBER)=$memberUnits units, byte-identical shared core=$sharedCount, sharedKeysDigest=$sharedDigest" >&2
 
 # ── step 2: measure a force ×REPS under NIX_SHOW_STATS, STOP-on-diff on the deterministic counters ──
-declare -A FC PO CP TH DIG GC CPU
+declare -A FC PO CP TH DIG
 det() { jq -c '{nrFunctionCalls,nrPrimOpCalls,nrOpUpdateValuesCopied,nrThunks}' "$1"; }
 measure() {
   local name="$1" expr="$2" raw="${3:-raw}"
-  local prev="" sf dig rep flag=(--raw)
+  local prev="" prevRep=0 sf dig rep flag=(--raw)
   [[ "$raw" == "json" ]] && flag=(--json)
   for rep in $(seq 1 "$REPS"); do
     sf="$tmp/$name-$rep.json"
@@ -130,18 +145,17 @@ $expr" 2>"$tmp/$name-$rep.err") || {
     cur="$(det "$sf")"
     if [[ -n "$prev" && "$cur" != "$prev" ]]; then
       echo "class-share-realization: NON-REPRODUCIBLE deterministic counters for '$name' — STOP, do not average." >&2
-      echo "  rep1: $prev" >&2
+      echo "  rep$prevRep: $prev" >&2
       echo "  rep$rep: $cur" >&2
       exit 1
     fi
     prev="$cur"
+    prevRep="$rep"
   done
   FC[$name]=$(jq -r .nrFunctionCalls "$sf")
   PO[$name]=$(jq -r .nrPrimOpCalls "$sf")
   CP[$name]=$(jq -r .nrOpUpdateValuesCopied "$sf")
   TH[$name]=$(jq -r .nrThunks "$sf")
-  GC[$name]=$(jq -r '.gc.totalBytes // 0' "$sf")
-  CPU[$name]=$(jq -r .cpuTime "$sf")
   DIG[$name]="$dig"
 }
 
@@ -154,14 +168,15 @@ measure inject "in builtins.hashString \"sha256\" (builtins.toJSON (builtins.rem
 
 # ── step 3: the BYTE GATE — injected member projection == real member projection (toJSON equality) ──
 echo "class-share-realization: byte gate — injected($MEMBER) == real($MEMBER) systemd.units" >&2
-gate="$(nix eval --impure --json --expr "$(preamble)
+gateExpr="$(preamble)
   a = (cfgOf \"$ARCH\").config.systemd.units;
   m = (cfgOf \"$MEMBER\").config.systemd.units;
   core = builtins.intersectAttrs (builtins.listToAttrs (map (k: { name = k; value = 1; }) sharedKeys)) a;
   injected = core // builtins.removeAttrs m sharedKeys;
   injJson = builtins.toJSON injected;
   realJson = builtins.toJSON m;
-in { gate = injJson == realJson; injectedDigest = builtins.hashString \"sha256\" injJson; realDigest = builtins.hashString \"sha256\" realJson; coreCount = builtins.length (builtins.attrNames core); }" 2>/dev/null)"
+in { gate = injJson == realJson; injectedDigest = builtins.hashString \"sha256\" injJson; realDigest = builtins.hashString \"sha256\" realJson; coreCount = builtins.length (builtins.attrNames core); }"
+gate="$(setup_eval bytegate nix eval --impure --json --expr "$gateExpr")"
 [[ "$(jq -r .gate <<<"$gate")" == "true" ]] || {
   echo "class-share-realization: BYTE GATE FAILED — injected != real. $gate" >&2
   exit 1
@@ -170,10 +185,11 @@ echo "  byte gate PASS: $(jq -c '{gate,coreCount,injectedDigest}' <<<"$gate")" >
 
 # ── step 4: systemPathUnsound — the synth work's 4.38× projection is NOT class-invariant here ──────
 echo "class-share-realization: system.path class-invariance (expect FALSE for heterogeneous reals)" >&2
-syspath="$(nix eval --impure --json --expr "$(preamble)
+syspathExpr="$(preamble)
   a = (cfgOf \"$ARCH\").config.system.path.drvPath;
   m = (cfgOf \"$MEMBER\").config.system.path.drvPath;
-in { archetype = a; member = m; classInvariant = a == m; }" 2>/dev/null)"
+in { archetype = a; member = m; classInvariant = a == m; }"
+syspath="$(setup_eval syspath nix eval --impure --json --expr "$syspathExpr")"
 echo "  $(jq -c '{classInvariant}' <<<"$syspath")" >&2
 
 # ── step 5: realizationPlaneNativeSharing (informational, ×1) — both members' units from ONE `out` ──
@@ -181,14 +197,15 @@ echo "  $(jq -c '{classInvariant}' <<<"$syspath")" >&2
 # share the REALIZATION layer in one eval? (Prediction: far less than declarations — host-specific.)
 echo "class-share-realization: realization-plane native sharing (both members, one shared out, ×1)" >&2
 nsf="$tmp/nativeshare.json"
-nsdig=$(NIX_SHOW_STATS=1 NIX_SHOW_STATS_PATH="$nsf" nix eval --impure --raw --expr "let
+nsExpr="let
   nc = builtins.getFlake \"github:sini/nix-config/$REV\";
   lib = nc.inputs.$CHAN.lib;
   hola = import $HOLA_SRC { inherit lib; };
   raw = import (nc.outPath + \"/flake.nix\");
   out = raw.outputs (nc.inputs // { self = out // { outPath = nc.outPath; inherit (nc) sourceInfo; }; $CHAN = nc.inputs.$CHAN // { lib = nc.inputs.$CHAN.lib; }; });
   unitsOf = host: out.nixosConfigurations.\${host}.config.systemd.units;
-in builtins.hashString \"sha256\" (builtins.toJSON [ (unitsOf \"$ARCH\") (unitsOf \"$MEMBER\") ])" 2>/dev/null)
+in builtins.hashString \"sha256\" (builtins.toJSON [ (unitsOf \"$ARCH\") (unitsOf \"$MEMBER\") ])"
+nsdig=$(NIX_SHOW_STATS=1 NIX_SHOW_STATS_PATH="$nsf" setup_eval nativeshare nix eval --impure --raw --expr "$nsExpr")
 
 # ── emit FACTS (measured verbatim; README jq computes deltas/fractions into the committed baseline) ──
 FACTS="$OUTDIR/facts.json"
@@ -211,7 +228,7 @@ jq -n \
        reconstruct:{ units:$memberUnits, counters:{nrFunctionCalls:($rFC|tonumber),nrPrimOpCalls:($rPO|tonumber),nrOpUpdateValuesCopied:($rCP|tonumber),nrThunks:($rTH|tonumber)}, digest:$rDIG },
        inject:     { units:($memberUnits-$sharedCount), counters:{nrFunctionCalls:($iFC|tonumber),nrPrimOpCalls:($iPO|tonumber),nrOpUpdateValuesCopied:($iCP|tonumber),nrThunks:($iTH|tonumber)}, digest:$iDIG }
      },
-     realizationPlaneNativeShare: { counters:{nrFunctionCalls:($nsFC|tonumber),nrPrimOpCalls:($nsPO|tonumber),nrOpUpdateValuesCopied:($nsCP|tonumber),nrThunks:($nsTH|tonumber)}, digest:$nsDIG } }' \
+     realizationPlaneNativeShare: { countersInformational:{nrFunctionCalls:($nsFC|tonumber),nrPrimOpCalls:($nsPO|tonumber),nrOpUpdateValuesCopied:($nsCP|tonumber),nrThunks:($nsTH|tonumber)}, digest:$nsDIG } }' \
   >"$FACTS"
 
 # ── summary.md (human) ─────────────────────────────────────────────────────────────────────────────

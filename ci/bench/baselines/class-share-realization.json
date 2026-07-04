@@ -99,8 +99,8 @@
     "configSpineDominates": "≈98% of a member's eval is the config-resolution spine (produce the units attrset at all), unshared across genuinely-distinct hosts; only the ~2% unit-value realization is shareable via config-merge, and only the byte-identical fraction of it."
   },
   "realizationPlaneNativeShare": {
-    "note": "INFORMATIONAL (×1). Both members' systemd.units forced from ONE shared `out` (keystone-style) — the REALIZATION-layer analogue of the declaration keystone (MEASUREMENT.md §Arm-C reconciliation pt2: blade+cortex compositionNames = 1.066× a single host). Answers: does native memoization share REALIZATION in-eval? Far less than declarations.",
-    "counters": {
+    "note": "INFORMATIONAL (×1). Both members' systemd.units forced from ONE shared `out` (keystone-style) — the REALIZATION-layer analogue of the declaration keystone (MEASUREMENT.md §Arm-C reconciliation pt2: blade+cortex compositionNames = 1.066× a single host). Answers: does native memoization share REALIZATION in-eval? Far less than declarations. Key is `countersInformational` (g6 `gcTotalBytesInformational` convention) — a ×1 characterization, machine-detectable as NEVER a gate.",
+    "countersInformational": {
       "nrFunctionCalls": 65193248,
       "nrPrimOpCalls": 27449732,
       "nrOpUpdateValuesCopied": 164332527,

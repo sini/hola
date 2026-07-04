@@ -413,6 +413,17 @@ its big win is unsound here. See [`../MEASUREMENT.md`](../MEASUREMENT.md) §"Tas
 | inject (cortex delta — shared core from archetype) | 66 | 45,528,833 | 109,519,756 | `f79a7517…` |
 | **per-added-member saving** (reconstruct − inject) | — | **732,796 (1.6%)** | **195,421 (0.18%)** | — |
 
+The table rows are derived from the committed baseline — regenerate them (never hand-sync on a
+re-baseline) with the one-liner below; the `%` are `.measurement.perAddedMemberSaving.fractionOfReconstruct`:
+
+```sh
+jq -r '.measurement as $m
+  | (["archetype","reconstruct","inject"][] as $k
+     | [$k, $m[$k].units, $m[$k].counters.nrFunctionCalls, $m[$k].counters.nrOpUpdateValuesCopied, $m[$k].digest[0:8]] | @tsv),
+    (["saving","-", $m.perAddedMemberSaving.counters.nrFunctionCalls, $m.perAddedMemberSaving.counters.nrOpUpdateValuesCopied, "-"] | @tsv)
+' ci/bench/baselines/class-share-realization.json
+```
+
 Byte gate: injected `== ` real (`injectedDigest == realDigest == 5aefc0b2…`, the reconstruct
 digest), 212-unit core — a mismatch is an unsound-sharing bug, a hard fail in the script.
 `realizationPlaneNativeShare` (informational): both hosts' units from one `out` = 65,193,248
@@ -468,7 +479,7 @@ framing are literal — same split as the `g6-split.json` / `dedup-savings.json`
      | ($F.counters.archetype.counters)  as $A
      | ($F.counters.reconstruct.counters) as $R
      | ($F.counters.inject.counters)      as $I
-     | ($F.realizationPlaneNativeShare.counters) as $NS
+     | ($F.realizationPlaneNativeShare.countersInformational) as $NS
      | def sub2($a;$b): ($C|map({(.):(($a[.])-($b[.]))})|add);
        def frac($a;$b): ($C|map({(.):(($a[.])/($b[.]))})|add);
        (sub2($R;$I)) as $saving
@@ -524,8 +535,8 @@ framing are literal — same split as the `g6-split.json` / `dedup-savings.json`
            configSpineDominates: "≈98% of a member'"'"'s eval is the config-resolution spine (produce the units attrset at all), unshared across genuinely-distinct hosts; only the ~2% unit-value realization is shareable via config-merge, and only the byte-identical fraction of it."
          },
          realizationPlaneNativeShare: {
-           note: "INFORMATIONAL (×1). Both members'"'"' systemd.units forced from ONE shared `out` (keystone-style) — the REALIZATION-layer analogue of the declaration keystone (MEASUREMENT.md §Arm-C reconciliation pt2: blade+cortex compositionNames = 1.066× a single host). Answers: does native memoization share REALIZATION in-eval? Far less than declarations.",
-           counters: $NS,
+           note: "INFORMATIONAL (×1). Both members'"'"' systemd.units forced from ONE shared `out` (keystone-style) — the REALIZATION-layer analogue of the declaration keystone (MEASUREMENT.md §Arm-C reconciliation pt2: blade+cortex compositionNames = 1.066× a single host). Answers: does native memoization share REALIZATION in-eval? Far less than declarations. Key is `countersInformational` (g6 `gcTotalBytesInformational` convention) — a ×1 characterization, machine-detectable as NEVER a gate.",
+           countersInformational: $NS,
            ratioVsSingleHostAvg: ($NS.nrFunctionCalls / (($A.nrFunctionCalls + $R.nrFunctionCalls) / 2)),
            savedVsSeparateSumFcalls: (1 - ($NS.nrFunctionCalls / ($A.nrFunctionCalls + $R.nrFunctionCalls))),
            keystoneDeclarationRatio: 1.066,
