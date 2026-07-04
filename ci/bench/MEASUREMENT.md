@@ -323,6 +323,13 @@ hashes; the demo confirms the `build` / `override` / `affected` /
 
 ### `class-share` (Arm C viability + byte gate)
 
+Both den branches (`feat/s1-per-sid-hostconfig`, `feat/s2-pipe-reads`) are
+LOCAL-ONLY — held worktree branches, pushed to no remote (verified absent on
+origin/sini/vic) — so this campaign is impure-local BY DESIGN: `getFlake` +
+`--impure` against local checkouts (`git+file://…`). Task 7 must NOT expect a
+fetchable ref; if the branches ever publish, swap the `git+file://` ref for a
+pinned `github:` ref.
+
 Override `nc.inputs.den` to s1 and byte-compare the terminal:
 
 ```nix
