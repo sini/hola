@@ -103,21 +103,29 @@ PREAMBLE_BAND=2
 BL_SRC="$HOLA_SRC/ci/bench/baselines" # the committed baselines — selftest copies these out, never edits them
 FAILURES=0
 
-# The evaluator-identity guard: the deterministic counters are deterministic per EVALUATOR BUILD, not
-# merely per version NUMBER. A different build that reports the SAME number produces DIFFERENT counters —
-# e.g. CI's Determinate Nix (`nix (Determinate Nix X.Y.Z) 2.34.7`, whose last field is also 2.34.7)
-# vs the baselines' upstream CppNix (`nix (Nix) 2.34.7`). Comparing only the number (awk '{print $NF}')
-# falsely reported "same" and hard-failed the CI counter gate while every DIGEST matched. So the
-# strong-form counter gate fires ONLY on the exact upstream-CppNix identity string; any other evaluator
-# (Determinate on CI, or a different CppNix build) gets DIGEST-only gating — the cross-evaluator
-# structural spine, which held everywhere — plus counters REPORTED INFORMATIONALLY, never gated.
-# `.generated.nixVersion` (the number) is the pinned evaluator version; upstream CppNix prints it as
-# exactly `nix (Nix) <number>`. Re-baselining on a new nix updates the number in the JSON, hence here.
+# Two-tier counter gate. Version STRINGS do NOT identify evaluator BUILDS: CI's Determinate Nix and the
+# baselines' upstream CppNix BOTH print `nix (Nix) 2.34.7`, yet the Determinate evaluator makes a handful
+# fewer primop calls on deep evals (MEASURED: nrPrimOpCalls -8 on ~20M-call evals, ~4e-7 relative; fcalls
+# / copies / every digest identical). Comparing only the number falsely reported "same evaluator" and
+# hard-failed the CI counter gate. So:
+#   STRONG form (EXACT): only on the baseline evaluator — HOLA_STRICT_COUNTERS=1, or AUTO when the version
+#     string matches the pin AND we are not in CI. Invariant pair exact, preamble-sensitive pair +-2. The
+#     pre-push gate that produced/validates the baselines.
+#   CI form (RELATIVE BAND): the default and any non-baseline build — every counter within +-0.1% of the
+#     baseline. Evaluator-build noise is ~2500x INSIDE the band, while a real O(k^2)-class regression (the
+#     bug class this campaign exists to catch) shifts counters by whole factors and blows through it. So CI
+#     keeps real teeth on counters WITHOUT coupling to a specific nix build. `.generated.nixVersion` is the
+#     pinned version; upstream CppNix prints it as exactly `nix (Nix) <number>`.
 BASELINE_NIX="$(jq -r '.generated.nixVersion' "$BL_SRC/g6-split.json")"
 EXPECTED_NIX="nix (Nix) $BASELINE_NIX"
 RUNNER_NIX="$(nix --version)"
-SAME_NIX=0
-[[ "$RUNNER_NIX" == "$EXPECTED_NIX" ]] && SAME_NIX=1
+REL_TOL=0.001 # CI counter tier: 0.1% relative band, per counter per cell
+STRICT="${HOLA_STRICT_COUNTERS:-auto}"
+if [[ "$STRICT" == "auto" ]]; then
+  # auto-strict on the baseline evaluator outside CI (the local pre-push gate); band otherwise.
+  if [[ "$RUNNER_NIX" == "$EXPECTED_NIX" && "${CI:-}" != "true" ]]; then STRICT=1; else STRICT=0; fi
+fi
+if [[ "$STRICT" == "1" ]]; then CMODE=strict; else CMODE=ci; fi
 
 # set_baselines DIR — point the consistency gates at a baseline set (DIR of the three JSONs). Normal runs
 # use BL_SRC; --selftest points this at a corrupted temp copy.
@@ -308,20 +316,22 @@ csv_cells() {
     | from_entries' "$1"
 }
 
-# counter_diff_table G6JSON CELLSJSON — emit one "cell counter: expected=E actual=A delta=D tol=T" line per
-# baseline cell×counter that VIOLATES tolerance (INV pair exact, BAND pair within ±PREAMBLE_BAND). Empty
-# output ⇒ every counter within tolerance. Turns the baselines gate into a self-diagnosing instrument.
-counter_diff_table() {
-  jq -r -n --slurpfile g6 "$1" --argjson cells "$2" \
-    --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
-    ($g6[0]) as $g
-    | [ $g.hosts | keys[] as $h | ["baseline-composition","baseline-toplevel"][] as $arm
-        | ($INV + $BAND)[] as $c
-        | ($cells[$h + "|" + $arm][$c]) as $act | ($g.hosts[$h][$arm].counters[$c]) as $exp
-        | ($act - $exp) as $d
-        | (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end) as $bad
-        | select($bad)
-        | "    \($h)/\($arm) \($c): expected=\($exp) actual=\($act) delta=\($d) tol=\(if $INV | index($c) then "exact" else "±\($band)" end)" ]
+# diff_counters EXPECTED ACTUAL — both are { cell: { counter: value, … } } maps. Emit one indented
+# "cell counter: expected=E actual=A delta=D tol=T" line per cell×counter that VIOLATES the tolerance for
+# the current CMODE (strict: invariant pair exact + preamble pair ±PREAMBLE_BAND; ci: every counter within
+# ±REL_TOL relative). Empty output ⇒ all within tolerance. The single self-diagnosing comparator for all
+# three re-measure arms (the exact numbers make a CI failure actionable — a gate that prints only FAIL is not).
+diff_counters() {
+  jq -r -n --argjson exp "$1" --argjson act "$2" \
+    --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" \
+    --arg mode "$CMODE" --argjson reltol "$REL_TOL" '
+    [ $exp | keys[] as $cell | ($INV + $BAND)[] as $c
+      | ($act[$cell][$c]) as $a | ($exp[$cell][$c]) as $e | ($a - $e) as $d
+      | (if $mode == "strict"
+           then (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end)
+           else (($d | fabs) > ($e * $reltol)) end) as $bad
+      | select($bad)
+      | "    \($cell) \($c): expected=\($e) actual=\($a) delta=\($d) tol=\(if $mode == "strict" then (if $INV | index($c) then "exact" else "±\($band)" end) else "±\($reltol * 100)%rel" end)" ]
     | .[]'
 }
 
@@ -340,19 +350,18 @@ g_remeasure_baselines() {
     ($g6[0]) as $g
     | ($g.hosts | keys | all(. as $h | ["baseline-composition","baseline-toplevel"] | all(. as $arm
         | $cells[$h + "|" + $arm].digest == $g.hosts[$h][$arm].digest)))' >/dev/null || return 1
-  # counters only when the runner's nix matches the baseline's pinned nix: invariant pair EXACT, sensitive
-  # pair within the documented ±2 preamble band. On mismatch, print a VERBOSE per-counter table (expected
-  # / actual / delta / tolerance) so a CI failure is self-diagnosing — a gate that prints only FAIL is not.
-  if [[ "$SAME_NIX" == "1" ]]; then
-    local diff
-    diff="$(counter_diff_table "$G6" "$cells")"
-    if [[ -n "$diff" ]]; then
-      echo "  [ci-remeasure baselines] COUNTER MISMATCH (evaluator '$RUNNER_NIX'):" >&2
-      echo "$diff" >&2
-      return 1
-    fi
-  else
-    echo "  [info] baseline-composition/-toplevel counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); digests gated" >&2
+  # counters gated in BOTH tiers (strict exact on the baseline evaluator / ci ±0.1% relative elsewhere, per
+  # CMODE); diff_counters prints a verbose per-counter table on any violation.
+  local exp diff
+  exp="$(jq -c -n --slurpfile g6 "$G6" '
+    ($g6[0].hosts) as $h
+    | [ $h | keys[] as $host | ["baseline-composition","baseline-toplevel"][] as $arm
+        | { key: ($host + "|" + $arm), value: $h[$host][$arm].counters } ] | from_entries')"
+  diff="$(diff_counters "$exp" "$cells")"
+  if [[ -n "$diff" ]]; then
+    echo "  [ci-remeasure baselines] COUNTER MISMATCH (mode=$CMODE, evaluator '$RUNNER_NIX'):" >&2
+    echo "$diff" >&2
+    return 1
   fi
   return 0
 }
@@ -384,25 +393,18 @@ g_remeasure_csr() {
       and ($F.counters.archetype.digest == $B.measurement.archetype.digest)
       and ($F.counters.reconstruct.digest == $B.measurement.reconstruct.digest)
       and ($F.counters.inject.digest == $B.measurement.inject.digest)' >/dev/null || return 1
-  if [[ "$SAME_NIX" == "1" ]]; then
-    local diff
-    diff="$(jq -r -n --slurpfile f "$facts" --slurpfile b "$CSR" \
-      --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
-      ($f[0]) as $F | ($b[0]) as $B
-      | [ ["archetype","reconstruct","inject"][] as $k | ($INV + $BAND)[] as $c
-          | ($F.counters[$k].counters[$c]) as $act | ($B.measurement[$k].counters[$c]) as $exp
-          | ($act - $exp) as $d
-          | (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end) as $bad
-          | select($bad)
-          | "    \($k) \($c): expected=\($exp) actual=\($act) delta=\($d) tol=\(if $INV | index($c) then "exact" else "±\($band)" end)" ]
-      | .[]')"
-    if [[ -n "$diff" ]]; then
-      echo "  [ci-remeasure csr] COUNTER MISMATCH (evaluator '$RUNNER_NIX'):" >&2
-      echo "$diff" >&2
-      return 1
-    fi
-  else
-    echo "  [info] class-share-realization counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); byte gate + digests gated" >&2
+  local exp act diff
+  exp="$(jq -c -n --slurpfile b "$CSR" '
+    ($b[0].measurement) as $m
+    | { archetype: $m.archetype.counters, reconstruct: $m.reconstruct.counters, inject: $m.inject.counters }')"
+  act="$(jq -c -n --slurpfile f "$facts" '
+    ($f[0].counters) as $c
+    | { archetype: $c.archetype.counters, reconstruct: $c.reconstruct.counters, inject: $c.inject.counters }')"
+  diff="$(diff_counters "$exp" "$act")"
+  if [[ -n "$diff" ]]; then
+    echo "  [ci-remeasure csr] COUNTER MISMATCH (mode=$CMODE, evaluator '$RUNNER_NIX'):" >&2
+    echo "$diff" >&2
+    return 1
   fi
   return 0
 }
@@ -434,25 +436,15 @@ g_remeasure_classshare() {
     ($g6[0]) as $g
     | ($g.hosts | keys | all(. as $h
         | $cells[$h + "|class-share"].digest == $g.hosts[$h]["baseline-composition"].digest))' >/dev/null || return 1
-  if [[ "$SAME_NIX" == "1" ]]; then
-    local diff
-    diff="$(jq -r -n --slurpfile dd "$DEDUP" --argjson cells "$cells" \
-      --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
-      ($dd[0]["class-share"].compositionWitness.perHost) as $cw
-      | [ $cw | keys[] as $h | ($INV + $BAND)[] as $c
-          | ($cells[$h + "|class-share"][$c]) as $act | ($cw[$h].s2[$c]) as $exp
-          | ($act - $exp) as $d
-          | (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end) as $bad
-          | select($bad)
-          | "    \($h) \($c): expected=\($exp) actual=\($act) delta=\($d) tol=\(if $INV | index($c) then "exact" else "±\($band)" end)" ]
-      | .[]')"
-    if [[ -n "$diff" ]]; then
-      echo "  [local-remeasure class-share] COUNTER MISMATCH (evaluator '$RUNNER_NIX'):" >&2
-      echo "$diff" >&2
-      return 1
-    fi
-  else
-    echo "  [info] class-share s2 counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); byte gate (digest) gated" >&2
+  local exp diff
+  exp="$(jq -c -n --slurpfile dd "$DEDUP" '
+    ($dd[0]["class-share"].compositionWitness.perHost) as $cw
+    | [ $cw | keys[] as $h | { key: ($h + "|class-share"), value: $cw[$h].s2 } ] | from_entries')"
+  diff="$(diff_counters "$exp" "$cells")"
+  if [[ -n "$diff" ]]; then
+    echo "  [local-remeasure class-share] COUNTER MISMATCH (mode=$CMODE, evaluator '$RUNNER_NIX'):" >&2
+    echo "$diff" >&2
+    return 1
   fi
   return 0
 }
@@ -481,10 +473,10 @@ g_selftest() {
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────────────────────────────
-if [[ "$SAME_NIX" == "1" ]]; then
-  echo "fleet-gates: mode=$MODE  evaluator='$RUNNER_NIX' == pinned  (counters GATED — strong form)" >&2
+if [[ "$CMODE" == "strict" ]]; then
+  echo "fleet-gates: mode=$MODE  evaluator='$RUNNER_NIX' (== pinned)  counters=EXACT strong-form (invariant exact, preamble pair ±$PREAMBLE_BAND)" >&2
 else
-  echo "fleet-gates: mode=$MODE  evaluator='$RUNNER_NIX' != pinned '$EXPECTED_NIX'  (counters REPORTED, NOT gated; digests are the cross-evaluator gate)" >&2
+  echo "fleet-gates: mode=$MODE  evaluator='$RUNNER_NIX' (pinned '$EXPECTED_NIX')  counters=±0.1% RELATIVE band (cross-build regression tier; set HOLA_STRICT_COUNTERS=1 on the baseline evaluator for exact)" >&2
 fi
 echo >&2
 

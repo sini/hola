@@ -589,41 +589,48 @@ re-measure:
 Modes: `--quick` = `[consistency]` only; default (no flag) = `[consistency]` + `[ci-remeasure]` + `[parity]`
 (the CI job); `--local` = default + `[local-remeasure]`; `--selftest` = the teeth check (below).
 
-### Why digests are gated everywhere but counters only on the exact baseline evaluator
+### Digests everywhere; counters in two tiers (exact strong-form + a relative CI band)
 
-MEASUREMENT.md §"Counter determinism": the four evaluator counters are bit-reproducible per EVALUATOR;
-the digests are not counters at all — a `baseline-toplevel` digest is a `drvPath`, a `baseline-composition`
+The digests are not counters at all — a `baseline-toplevel` digest is a `drvPath`, a `baseline-composition`
 digest is a sha256 of the option-name list, the `rebuild-dedup` digest is a sha256 of the soundness record,
 the Task-7b digests are sha256s of the `systemd.units` JSON — all determined by the pinned inputs, NOT by
-the evaluator, so they reproduce across evaluators. The `[ci-remeasure]` gate therefore always exact-gates
-DIGESTS and gates the deterministic COUNTERS only when the running evaluator is byte-identical in identity
-to the one that produced the baselines; otherwise it prints an evaluator-mismatch notice, reports the
-counters informationally, and lets the digests + `[consistency]` + `[parity]` enforce.
+the evaluator, so they reproduce across evaluators. The `[ci-remeasure]` gate ALWAYS exact-gates DIGESTS
+(the cross-evaluator structural spine) and the byte gate. The deterministic COUNTERS are gated in two tiers,
+because — the lesson from the first campaign CI runs — **a version STRING does not identify an evaluator
+BUILD:**
 
-**"Same evaluator" is a stricter test than "same version number"** — and getting this wrong caused the
-first campaign CI run to fail. The counters are deterministic per evaluator BUILD, not merely per version
-number: two builds that report the same number produce different counters. Concretely, the CI runner uses
-**Determinate Nix** (`nix (Determinate Nix X.Y.Z) 2.34.7` — note the last field is *also* 2.34.7), whereas
-the baselines were produced by upstream **CppNix** (`nix (Nix) 2.34.7`). Comparing only the version number
-(`nix --version | awk '{print $NF}'`) falsely reported "same evaluator" and hard-failed the two CI counter
-comparisons even though every digest, the byte gate, all `[consistency]` gates, and `[parity]` passed on
-the runner. The gate now compares the FULL `nix --version` string against the pinned upstream-CppNix
-identity `nix (Nix) <.generated.nixVersion>` (currently `nix (Nix) 2.34.7`): only that exact identity gates
-counters (the strong form — the local run that produced the baselines), and any other evaluator (Determinate
-on CI, or a differently-built CppNix) gets DIGEST-only gating + informational counters. This is the honest
-partition: **the digests are the cross-evaluator structural spine and hold everywhere; the counters are the
-strong-form check and gate only on the baseline evaluator.** Re-baselining on a new nix updates
-`.generated.nixVersion`, which the gate reads to form the expected identity string.
+- The CI runner installs **Determinate Nix**, whose `nix --version` prints exactly `nix (Nix) 2.34.7` — the
+  SAME string as the upstream **CppNix** that produced the baselines — yet its evaluator makes a handful
+  fewer primop calls on deep evals. **Measured** on the first green-elsewhere CI run: `nrPrimOpCalls` **−8**
+  on blade/cortex `baseline-toplevel` and all three Task-7b forces (≈ 4e-7 relative on ~20M calls);
+  `nrFunctionCalls`, `nrOpUpdateValuesCopied`, and every digest identical; `nrThunks` +1 (the preamble
+  store-path artifact below). So no version test — number or full string — can separate the two builds, and
+  an exact counter gate on CI is a false red.
+- **Strong form (exact), the pre-push gate:** counters exact-match (invariant pair `nrFunctionCalls` /
+  `nrPrimOpCalls` exact, preamble-sensitive pair `nrOpUpdateValuesCopied` / `nrThunks` within ±2) ONLY on the
+  baseline evaluator. `fleet-gates.sh` auto-selects it when `nix --version` equals the pinned
+  `nix (Nix) <.generated.nixVersion>` AND `$CI` is not `true` (i.e. the local machine that produced the
+  baselines); `HOLA_STRICT_COUNTERS=1` forces it. This is where the −8 is caught — the exact form is
+  same-build-only by design.
+- **CI form (relative band):** the default and any non-baseline build gate every counter within **±0.1%**
+  of the baseline, per counter per cell. Evaluator-build noise (−8 on ~20M ≈ 4e-7) sits **~2500× inside** the
+  band, while a real regression of the class this campaign exists to catch (an O(k²) blowup) shifts counters
+  by whole factors and blows straight through it. So CI keeps genuine teeth on counters on ANY evaluator,
+  with no coupling to a specific nix build.
+
+Both tiers print a VERBOSE per-counter table on any violation (`cell counter: expected / actual / delta / tol`) — a gate that prints only FAIL is not a diagnostic instrument. Re-baselining on a new nix updates
+`.generated.nixVersion`, which the gate reads to form the expected strong-form identity string.
 
 One further subtlety the counter gate handles: even at the SAME nix version, a re-measurement runs with a
 DIFFERENT baked `HOLA_SRC` store path (any hola tree edit — including adding `fleet-gates.sh` itself —
 rehashes the source), and the pinNotes above record that this shifts `nrOpUpdateValuesCopied` / `nrThunks`
 by ±1-2 while `nrFunctionCalls` / `nrPrimOpCalls` and every digest stay invariant. (Observed on the Task-8
 re-measurement: a uniform `nrThunks +1` on all six baseline cells, everything else exact.) So the
-`[ci-remeasure]` counter gate exact-matches the invariant pair and bands the two preamble-sensitive
-counters by ±2 (the documented ceiling — a larger shift is a STOP-and-report finding). The digests remain
-the exact structural spine. The `[consistency]` gates are unaffected: they compare numbers WITHIN one
-baseline (one preamble), so they stay exact on all four counters.
+STRONG-FORM counter gate exact-matches the invariant pair and bands the two preamble-sensitive counters by
+±2 (the documented ceiling — a larger shift is a STOP-and-report finding); the CI relative-band tier
+subsumes this ±2 (0.1% of ~20M ≫ 2). The digests remain the exact structural spine. The `[consistency]`
+gates are unaffected: they compare numbers WITHIN one baseline (one preamble), so they stay exact on all
+four counters.
 
 ### The floors (and the never-a-win record)
 

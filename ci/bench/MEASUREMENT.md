@@ -35,6 +35,18 @@ never an equality check. See `ci/bench/baselines/README.md` §"What is pinned / 
 pinned" for the per-cell evidence (the exact drift figures) and the Task 8 gate
 policy.
 
+**Same version number ≠ same evaluator build (Task 8 finding).** "Bit-reproducible
+per nix version" holds only for the SAME evaluator BUILD. A version STRING does not
+identify a build: CI's Determinate Nix and upstream CppNix both print
+`nix (Nix) 2.34.7`, yet Determinate's evaluator measured **`nrPrimOpCalls` −8** on
+blade/cortex `baseline-toplevel` and all Task-7b forces (~4e-7 relative; `nrFunctionCalls`
+/ `nrOpUpdateValuesCopied` / every digest identical). So an EXACT counter gate is
+**same-build-only** — `fleet-gates.sh` runs it (strong form) solely on the baseline
+evaluator (`HOLA_STRICT_COUNTERS`, auto outside CI). CROSS-BUILD regression detection
+uses a **relative band** (±0.1%) that swallows build-level counter noise but not a
+real O(k²) blowup. Digests + the byte gate are the cross-build structural spine and
+gate everywhere. Details: `ci/bench/baselines/README.md` §Task 8.
+
 ## Pinned revisions
 
 | Input | Rev | Role |
