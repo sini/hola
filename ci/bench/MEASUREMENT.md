@@ -486,7 +486,12 @@ Task 7b (§Task 7b below): forcing both hosts' `systemd.units` from one `out` co
 **≈ 1.5× a single host** — NOT the declaration keystone's 1.066×, because host-specific
 config *resolution* (unlike declaration) is not natively shared. Task 9 quotes all
 three — the same class work seen from the cross-eval, in-eval-declaration, and
-in-eval-realization planes.
+in-eval-realization planes. The productized mechanism that collapses the third
+(realization) plane's spine — hand the class core to the merge kernel as a fixed input so each
+member resolves only its delta — is `github:sini/gen-class`'s tier-2 `applyCoreFixed` (over
+gen-merge's fixed-input kernel), gated in the gen hub perf-bench `classShare` workload at a ~5.8×
+spine reduction (§Task 7b "Mechanism source"). This lab measures the plane; gen-class gates the
+mechanism.
 
 ### Arm C (class-share): byte-SOUND, but NO composition win in this harness — reconciling the ~60% prior
 
@@ -673,3 +678,15 @@ wins is precisely that config-resolution spine (inject the class core as a fixed
 input so each member resolves only its delta). Full framing + all counters:
 `baselines/class-share-realization.json`; reproduction: `baselines/README.md`
 §class-share-realization.
+
+**Mechanism source — `github:sini/gen-class`.** This driver's oracle / injector / probe / gate
+shapes are now productized as a standalone Class-B lib, LIFTED from here, not reinvented: the
+byte-identical-intersection oracle is `mkCore`, the fixed-input config-merge injector
+(`shareClassProjection` above) is `applyCoreMerge`, the class-invariance probe is `invariantUnder`,
+and the byte gate is `gateCore`. The spine-SKIPPING tier-2 engine — hand the class core to the
+merge kernel as a fixed input so each member resolves only its delta (the "inject the class core as
+a fixed module input" this section names as den-hoag's target) — is `applyCoreFixed` over
+gen-merge's fixed-input kernel; its number is gated in the gen hub perf-bench `classShare` workload:
+a **~5.8× spine reduction** (fixed builds only ~0.17× the full re-merge's thunk graph), byte-identical,
+permanently gated ≤ 0.30 against the A1 1.89×→2.48× spine-tax band. This lab measures the class-share
+OPPORTUNITY on the real fleet; gen-class ci gates the MECHANISM on a synthetic corpus.

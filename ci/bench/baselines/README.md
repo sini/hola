@@ -142,6 +142,15 @@ four evaluator counters plus both digests. `gcTotalBytes` and `cpuTime` may appe
 hub's `ci/README.md`), never in an equality check. This partition is fixed in
 `../MEASUREMENT.md` §"Counter determinism".
 
+**LAB gates vs MECHANISM gates.** The `fleet-gates` here gate the REAL-FLEET LAB numbers: the
+measured composition/terminal split, the dedup arms, and Arm-C's overhead + byte ties on the pinned
+nix-config corpus. The class-share MECHANISM itself — the oracle / injector / probe / byte gate
+(`mkCore` / `applyCoreMerge` / `invariantUnder` / `gateCore`, lifted from `class-share-realization.sh`)
+and the tier-2 spine-skipping `applyCoreFixed` — is productized in `github:sini/gen-class`, and its
+gates live in that lib's ci (byte-parity on a synthetic corpus) plus the gen hub perf-bench
+`classShare` spine-reduction gate (≤ 0.30). This lab measures the opportunity on the real fleet;
+gen-class ci gates the mechanism. See `../MEASUREMENT.md` §Task 7b "Mechanism source".
+
 **Pins** (`.pins` in the JSON; corpus revs cross-checked against the fleet's own
 `flake.lock`, matching MEASUREMENT.md's pin table): hola harness `5b88004`,
 nix-config corpus `8f84aa6`, vendored/unstable-channel nixpkgs `567a49d`, ci nixpkgs
