@@ -15,6 +15,10 @@ jobs:
   #   - ulimit -s unlimited — the den fleet eval (esp. cortex) is deep and overflows the default 8 MB
   #     stack (MEASUREMENT.md; same reason fleet-stats / fleet-gates raise it). Without pipe-operators the
   #     eval never got far enough to hit this, so the stack overflow was masked by the feature error.
+  #   - free disk + swap — `nix flake check` forces the WHOLE fleet (bitstream/blade/cortex, vanilla +
+  #     engine = 6 deep toplevels) in ONE eval process; on a 7 GB-RAM runner that exhausted memory and the
+  #     operation was canceled mid-eval. Reclaim disk and add swap so it fits. (The fleet-gates job evals
+  #     per-host in SEPARATE processes, so it fit without this — the fix is only on this job.)
   check:
     runs-on: ubuntu-latest
     defaults:
@@ -22,6 +26,13 @@ jobs:
         working-directory: ci
     steps:
       - uses: actions/checkout@v4
+      - name: Reclaim disk + add swap for the one-process fleet eval
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/android || true
+          sudo fallocate -l 12G /mnt/swapfile-ci && sudo chmod 600 /mnt/swapfile-ci \
+            && sudo mkswap /mnt/swapfile-ci && sudo swapon /mnt/swapfile-ci || true
+          free -h; df -h /
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           extra-conf: |

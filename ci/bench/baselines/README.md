@@ -589,16 +589,31 @@ re-measure:
 Modes: `--quick` = `[consistency]` only; default (no flag) = `[consistency]` + `[ci-remeasure]` + `[parity]`
 (the CI job); `--local` = default + `[local-remeasure]`; `--selftest` = the teeth check (below).
 
-### Why digests are gated always but counters only same-nix
+### Why digests are gated everywhere but counters only on the exact baseline evaluator
 
-MEASUREMENT.md §"Counter determinism": the four evaluator counters are bit-reproducible PER NIX VERSION;
+MEASUREMENT.md §"Counter determinism": the four evaluator counters are bit-reproducible per EVALUATOR;
 the digests are not counters at all — a `baseline-toplevel` digest is a `drvPath`, a `baseline-composition`
 digest is a sha256 of the option-name list, the `rebuild-dedup` digest is a sha256 of the soundness record,
 the Task-7b digests are sha256s of the `systemd.units` JSON — all determined by the pinned inputs, NOT by
-the evaluator, so they reproduce across nix versions. The `[ci-remeasure]` gate therefore always exact-gates
-DIGESTS and gates the deterministic COUNTERS only when `nix --version` matches the baseline's pinned version
-(`g6-split.json` `.generated.nixVersion`, currently 2.34.7); otherwise it prints a version-mismatch notice
-and skips the counter comparison (the digests + `[consistency]` + `[parity]` still enforce).
+the evaluator, so they reproduce across evaluators. The `[ci-remeasure]` gate therefore always exact-gates
+DIGESTS and gates the deterministic COUNTERS only when the running evaluator is byte-identical in identity
+to the one that produced the baselines; otherwise it prints an evaluator-mismatch notice, reports the
+counters informationally, and lets the digests + `[consistency]` + `[parity]` enforce.
+
+**"Same evaluator" is a stricter test than "same version number"** — and getting this wrong caused the
+first campaign CI run to fail. The counters are deterministic per evaluator BUILD, not merely per version
+number: two builds that report the same number produce different counters. Concretely, the CI runner uses
+**Determinate Nix** (`nix (Determinate Nix X.Y.Z) 2.34.7` — note the last field is *also* 2.34.7), whereas
+the baselines were produced by upstream **CppNix** (`nix (Nix) 2.34.7`). Comparing only the version number
+(`nix --version | awk '{print $NF}'`) falsely reported "same evaluator" and hard-failed the two CI counter
+comparisons even though every digest, the byte gate, all `[consistency]` gates, and `[parity]` passed on
+the runner. The gate now compares the FULL `nix --version` string against the pinned upstream-CppNix
+identity `nix (Nix) <.generated.nixVersion>` (currently `nix (Nix) 2.34.7`): only that exact identity gates
+counters (the strong form — the local run that produced the baselines), and any other evaluator (Determinate
+on CI, or a differently-built CppNix) gets DIGEST-only gating + informational counters. This is the honest
+partition: **the digests are the cross-evaluator structural spine and hold everywhere; the counters are the
+strong-form check and gate only on the baseline evaluator.** Re-baselining on a new nix updates
+`.generated.nixVersion`, which the gate reads to form the expected identity string.
 
 One further subtlety the counter gate handles: even at the SAME nix version, a re-measurement runs with a
 DIFFERENT baked `HOLA_SRC` store path (any hola tree edit — including adding `fleet-gates.sh` itself —

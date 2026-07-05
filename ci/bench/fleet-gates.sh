@@ -103,11 +103,21 @@ PREAMBLE_BAND=2
 BL_SRC="$HOLA_SRC/ci/bench/baselines" # the committed baselines — selftest copies these out, never edits them
 FAILURES=0
 
-# The runner-vs-baseline nix-version guard: counters are deterministic PER NIX VERSION; digests are not.
+# The evaluator-identity guard: the deterministic counters are deterministic per EVALUATOR BUILD, not
+# merely per version NUMBER. A different build that reports the SAME number produces DIFFERENT counters —
+# e.g. CI's Determinate Nix (`nix (Determinate Nix X.Y.Z) 2.34.7`, whose last field is also 2.34.7)
+# vs the baselines' upstream CppNix (`nix (Nix) 2.34.7`). Comparing only the number (awk '{print $NF}')
+# falsely reported "same" and hard-failed the CI counter gate while every DIGEST matched. So the
+# strong-form counter gate fires ONLY on the exact upstream-CppNix identity string; any other evaluator
+# (Determinate on CI, or a different CppNix build) gets DIGEST-only gating — the cross-evaluator
+# structural spine, which held everywhere — plus counters REPORTED INFORMATIONALLY, never gated.
+# `.generated.nixVersion` (the number) is the pinned evaluator version; upstream CppNix prints it as
+# exactly `nix (Nix) <number>`. Re-baselining on a new nix updates the number in the JSON, hence here.
 BASELINE_NIX="$(jq -r '.generated.nixVersion' "$BL_SRC/g6-split.json")"
-RUNNER_NIX="$(nix --version | awk '{print $NF}')"
+EXPECTED_NIX="nix (Nix) $BASELINE_NIX"
+RUNNER_NIX="$(nix --version)"
 SAME_NIX=0
-[[ "$BASELINE_NIX" == "$RUNNER_NIX" ]] && SAME_NIX=1
+[[ "$RUNNER_NIX" == "$EXPECTED_NIX" ]] && SAME_NIX=1
 
 # set_baselines DIR — point the consistency gates at a baseline set (DIR of the three JSONs). Normal runs
 # use BL_SRC; --selftest points this at a corrupted temp copy.
@@ -323,6 +333,8 @@ g_remeasure_baselines() {
           | ($INV | all(. as $c | $cells[$h + "|" + $arm][$c] == $g.hosts[$h][$arm].counters[$c]))
             and ($BAND | all(. as $c
               | ($cells[$h + "|" + $arm][$c] - $g.hosts[$h][$arm].counters[$c] | fabs) <= $band)))))' >/dev/null || return 1
+  else
+    echo "  [info] baseline-composition/-toplevel counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); digests gated" >&2
   fi
   return 0
 }
@@ -362,6 +374,8 @@ g_remeasure_csr() {
           | ($INV | all(. as $c | $F.counters[$k].counters[$c] == $B.measurement[$k].counters[$c]))
             and ($BAND | all(. as $c
               | ($F.counters[$k].counters[$c] - $B.measurement[$k].counters[$c] | fabs) <= $band)))' >/dev/null || return 1
+  else
+    echo "  [info] class-share-realization counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); byte gate + digests gated" >&2
   fi
   return 0
 }
@@ -400,6 +414,8 @@ g_remeasure_classshare() {
       | ($cw | keys | all(. as $h
           | ($INV | all(. as $c | $cells[$h + "|class-share"][$c] == $cw[$h].s2[$c]))
             and ($BAND | all(. as $c | ($cells[$h + "|class-share"][$c] - $cw[$h].s2[$c] | fabs) <= $band))))' >/dev/null || return 1
+  else
+    echo "  [info] class-share s2 counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); byte gate (digest) gated" >&2
   fi
   return 0
 }
@@ -428,7 +444,11 @@ g_selftest() {
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────────────────────────────
-echo "fleet-gates: mode=$MODE  nix=$RUNNER_NIX  baseline-nix=$BASELINE_NIX  (counters $([[ $SAME_NIX == 1 ]] && echo GATED || echo skipped-version-mismatch))" >&2
+if [[ "$SAME_NIX" == "1" ]]; then
+  echo "fleet-gates: mode=$MODE  evaluator='$RUNNER_NIX' == pinned  (counters GATED — strong form)" >&2
+else
+  echo "fleet-gates: mode=$MODE  evaluator='$RUNNER_NIX' != pinned '$EXPECTED_NIX'  (counters REPORTED, NOT gated; digests are the cross-evaluator gate)" >&2
+fi
 echo >&2
 
 rc=0
