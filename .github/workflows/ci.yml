@@ -6,6 +6,15 @@ on:
     branches: [main]
 
 jobs:
+  # Correctness: parity oracles (den-fleet-parity, engine-parity, channel-modules-identity) + format.
+  #
+  # Two runner-level settings are load-bearing and were the cause of the pre-campaign RED on this job:
+  #   - extra-experimental-features = pipe-operators — the ci flake needs it to eval nix-config. Declaring
+  #     it in the flake's nixConfig (ci/flake.nix) is NOT enough: an untrusted CI runner ignores flake
+  #     nixConfig, so it must be a RUNNER nix.conf setting (extra-conf), not a flake setting.
+  #   - ulimit -s unlimited — the den fleet eval (esp. cortex) is deep and overflows the default 8 MB
+  #     stack (MEASUREMENT.md; same reason fleet-stats / fleet-gates raise it). Without pipe-operators the
+  #     eval never got far enough to hit this, so the stack overflow was masked by the feature error.
   check:
     runs-on: ubuntu-latest
     defaults:
@@ -14,6 +23,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            extra-experimental-features = pipe-operators
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      - run: nix flake check
+      - run: ulimit -s unlimited || true; nix flake check
       - run: nix fmt -- --ci
+
+  # Regression gates (Task 8): the fleet-eval campaign's CLAIMS as permanent gates — parity holds AND
+  # savings don't erode. Full mode = [consistency] (JSON arithmetic + pins + floors) + [ci-remeasure]
+  # (re-run the public-pinned arms, digests always + counters when nix matches) + [parity]. The
+  # [local-remeasure] Arm-C s2 arm is a documented PRE-PUSH LOCAL gate (needs den git+file:// worktrees a
+  # runner cannot fetch), so it is deliberately NOT run here. The fleet-gates app bakes `ulimit -s
+  # unlimited` for its child evals; the step raises it too so the outer eval is covered. ~12-18 min.
+  # Campaign scaffolding; the durable home migrates to gen-rebuild ci at roadmap-A3
+  # (ci/bench/baselines/README.md §Task 8).
+  fleet-gates:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            extra-experimental-features = pipe-operators
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: ulimit -s unlimited || true; nix run .#fleet-gates

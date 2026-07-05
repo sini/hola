@@ -27,8 +27,13 @@
       inherit inputs;
       name = "hola";
       testModules = ./tests;
-      # Tier-2 evidence apps (perSystem.apps) — never gate CI.
-      extraModules = [ ./apps.nix ];
+      # Tier-2 evidence apps (perSystem.apps) — mostly non-gating; fleet-gates (Task 8) DOES gate.
+      # precommit.nix raises the stack ulimit on the nix-unit hook so the deep den-fleet-parity eval
+      # does not overflow when committing a .nix change.
+      extraModules = [
+        ./apps.nix
+        ./precommit.nix
+      ];
       # nixpkgs threaded for the real-host fixture (eval-config import) in later tasks.
       specialArgs = {
         inherit hola;

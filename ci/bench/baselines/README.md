@@ -562,3 +562,106 @@ A host/channel addition to the fleet does not automatically enter this arm — t
 archetype are pinned in `ci/bench/class-share-realization.sh` (`ARCH`/`MEMBER`/`CHAN`); a genuine
 near-homogeneous class (Option B, e.g. axon nodes) is the natural follow-up and would be a new
 archetype/member pin plus a re-baseline.
+
+## Task 8 — the regression gates (`ci/bench/fleet-gates.sh`)
+
+`fleet-gates.sh` turns everything above into permanent gates: the campaign's two claims — PARITY holds
+(the fleet builds byte-identically on the vendored engine) and SAVINGS DON'T ERODE (the G6 split, the
+Arm-R saving, the Arm-C byte-sound overhead, and the Task-7b realization saving) — become a failing check
+if a future change breaks them. It is wired as the `fleet-gates` app (`nix run ./ci#fleet-gates`) and as a
+GitHub `fleet-gates` workflow job. It is a SEPARATE script, not a `--gate` mode on `fleet-stats.sh`: the
+two share almost no code (the measurement core is REUSED by *invoking* `fleet-stats` / the Task-7b driver,
+not duplicated; the gate body is 3-file consistency arithmetic + pin agreement + floors + a selftest), so
+the >70% code-share bar for folding them together is not met.
+
+### The partition (which gate runs where, and why)
+
+Each gate line prints its partition label. The partition is dictated by what a CI runner can and cannot
+re-measure:
+
+| partition | what it does | runs in CI? |
+|---|---|---|
+| `[consistency]` | pure JSON arithmetic over the committed baselines + cross-file / dual-site pin agreement + the pinned FLOORS. No eval. | yes (seconds) — the `--quick` pre-commit path |
+| `[ci-remeasure]` | re-run the PUBLIC-pinned arms (`baseline-*` via `fleet-stats`; `rebuild-dedup`; `class-share-realization.sh`) and compare: DIGESTS always, the 4 deterministic COUNTERS only when the runner's nix == the baseline's pinned nix | yes (~12-18 min) |
+| `[parity]` | `den-fleet-parity` (vanilla == vendored-engine drvPath, all 3 hosts) + `channel-modules-identity` — the same eval `nix flake check` forces | yes |
+| `[local-remeasure]` | re-measure the Arm-C `class-share` s2 arm | NO — needs the LOCAL den worktree branches (`git+file://`; campaign impure-local by design, MEASUREMENT.md §class-share). A documented PRE-PUSH LOCAL gate: `nix run ./ci#fleet-gates -- --local` |
+
+Modes: `--quick` = `[consistency]` only; default (no flag) = `[consistency]` + `[ci-remeasure]` + `[parity]`
+(the CI job); `--local` = default + `[local-remeasure]`; `--selftest` = the teeth check (below).
+
+### Why digests are gated always but counters only same-nix
+
+MEASUREMENT.md §"Counter determinism": the four evaluator counters are bit-reproducible PER NIX VERSION;
+the digests are not counters at all — a `baseline-toplevel` digest is a `drvPath`, a `baseline-composition`
+digest is a sha256 of the option-name list, the `rebuild-dedup` digest is a sha256 of the soundness record,
+the Task-7b digests are sha256s of the `systemd.units` JSON — all determined by the pinned inputs, NOT by
+the evaluator, so they reproduce across nix versions. The `[ci-remeasure]` gate therefore always exact-gates
+DIGESTS and gates the deterministic COUNTERS only when `nix --version` matches the baseline's pinned version
+(`g6-split.json` `.generated.nixVersion`, currently 2.34.7); otherwise it prints a version-mismatch notice
+and skips the counter comparison (the digests + `[consistency]` + `[parity]` still enforce).
+
+One further subtlety the counter gate handles: even at the SAME nix version, a re-measurement runs with a
+DIFFERENT baked `HOLA_SRC` store path (any hola tree edit — including adding `fleet-gates.sh` itself —
+rehashes the source), and the pinNotes above record that this shifts `nrOpUpdateValuesCopied` / `nrThunks`
+by ±1-2 while `nrFunctionCalls` / `nrPrimOpCalls` and every digest stay invariant. (Observed on the Task-8
+re-measurement: a uniform `nrThunks +1` on all six baseline cells, everything else exact.) So the
+`[ci-remeasure]` counter gate exact-matches the invariant pair and bands the two preamble-sensitive
+counters by ±2 (the documented ceiling — a larger shift is a STOP-and-report finding). The digests remain
+the exact structural spine. The `[consistency]` gates are unaffected: they compare numbers WITHIN one
+baseline (one preamble), so they stay exact on all four counters.
+
+### The floors (and the never-a-win record)
+
+Exact gates use EXPLICIT counter paths — never a `.counters` glob — so `gcTotalBytesInformational` /
+`realizationPlaneNativeShare.countersInformational` can never leak into a comparison. Only the deterministic
+set feeds any exact/floor math; `gcTotalBytes` and `cpuTime` appear in NO gate.
+
+- **Arm-R floor:** `savedFractionOfFleetComposition.nrFunctionCalls >= 0.60` (measured 0.667). The ~6.7pp
+  headroom absorbs a future host-count change that shifts the skipped-fraction without masking a real
+  cone-growth regression (a saving that fell below 0.60 means the dedup cone grew unexpectedly).
+- **Task-7b floor:** `perAddedMemberSaving.fractionOfReconstruct.nrFunctionCalls >= 0.008` (measured
+  ~0.0158). The saving is small, so the floor is a generous ~half: it guards a sign-flip (injection stopped
+  helping) or a gross regression, and because the saving is an exact within-driver delta (reconstruct −
+  inject, same preamble) it does not noise-flake at that threshold.
+- **Arm-C is an OVERHEAD record, NOT a win — no floor.** den@s2 costs ~+4.6% at the declaration layer in
+  this harness (MEASUREMENT.md §Arm-C). The gate only re-asserts the byte gates (composition digest +
+  terminal drvPath byte-identical) and that the recorded `delta == s2 − pinned`; it never treats the delta
+  as a saving and never floors it.
+
+Same threshold-update policy as the rest of this file and the gen hub's `ci/README.md`: if a legitimate
+engine/corpus change shifts a baseline, update the JSON + this section's numbers in the SAME PR citing the
+new run — never lower a floor or delete a workload to make the gate pass.
+
+### Teeth (proven)
+
+`fleet-gates.sh --selftest` copies the three baselines to a temp dir, corrupts one (first a deterministic
+counter the Arm-R arithmetic depends on, then the Arm-R floor value below its pin), and asserts the
+`[consistency]` sweep FAILS on each. It never commits a corrupted baseline. Run it to confirm the gate has
+teeth before trusting a green `--quick`.
+
+### The `ulimit` fix
+
+The fleet eval is deep and overflows the default 8 MB stack. `fleet-gates.sh` bakes `ulimit -s unlimited`
+once at the top (every child eval inherits it), matching `fleet-stats.sh` / `class-share-realization.sh`.
+The gen `mkCi` `ci` pre-commit hook (`nix-unit --flake ./ci#tests`) hit the same overflow when committing a
+`.nix` change (the suite includes `den-fleet-parity`); `ci/precommit.nix` overrides that hook's entry with
+a wrapper that raises the stack then execs the same `nix-unit` invocation. That override is hola-local (this
+repo's push); the durable home for it is gen's `ci/flakeModule.nix` (every gen lib's nix-unit hook would
+benefit) — the same "durable home elsewhere" note the gates carry below.
+
+### Lifecycle
+
+These hola gates are CAMPAIGN SCAFFOLDING. The durable regression home for the incremental-rebuild
+mechanism migrates to **gen-rebuild's own CI** when roadmap-A3 productizes it; hola remains the measurement
+LAB (the place the corpus, the arms, and the byte gates live). Until then `fleet-gates.sh` is the permanent
+gate. When A3 lands, the Arm-R portion moves to gen-rebuild ci and this file's Arm-R gate becomes a
+cross-reference.
+
+### Fleet-topology edit sites (extends the note above)
+
+A host/channel addition must ALSO be re-baselined for the gate to keep meaning: after touching the sites in
+§"How to refresh" (the `fleet-stats.sh` maps, the `rebuild-dedup` arm's inline map, and re-baselining
+`g6-split.json` + `dedup-savings.json`), the gate picks up the new host automatically for the
+`[consistency]` and `[ci-remeasure]` partitions (it iterates `g6-split.json` `.hosts`). No `fleet-gates.sh`
+edit is needed for a host addition — but the Arm-R floor's headroom assumption (§The floors) should be
+re-checked, since a new host changes the skipped-fraction.

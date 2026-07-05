@@ -51,5 +51,12 @@
       apps.fleet-stats = mkBench "fleet-stats" [ ] {
         HOLA_FLEET_NIXCONFIG = "${inputs.nix-config}";
       } ./bench/fleet-stats.sh;
+      # Task 8 regression gate: re-asserts the campaign's parity + savings baselines. UNLIKE the other
+      # Tier-2 apps this one DOES gate (the CI workflow's fleet-gates job runs it). It re-invokes
+      # `nix run .#fleet-stats` + class-share-realization.sh for the [ci-remeasure] partition, so it also
+      # bakes the pinned nix-config (for symmetry) though its consistency partition needs only HOLA_SRC.
+      apps.fleet-gates = mkBench "fleet-gates" [ ] {
+        HOLA_FLEET_NIXCONFIG = "${inputs.nix-config}";
+      } ./bench/fleet-gates.sh;
     };
 }
