@@ -28,11 +28,10 @@
       name = "hola";
       testModules = ./tests;
       # Tier-2 evidence apps (perSystem.apps) — mostly non-gating; fleet-gates (Task 8) DOES gate.
-      # precommit.nix raises the stack ulimit on the nix-unit hook so the deep den-fleet-parity eval
-      # does not overflow when committing a .nix change.
+      # The stack-raising nix-unit hook wrapper now comes from gen's mkCi itself (flakeModule.nix,
+      # since gen@6d259ef) — the local precommit.nix override it superseded is deleted.
       extraModules = [
         ./apps.nix
-        ./precommit.nix
       ];
       # nixpkgs threaded for the real-host fixture (eval-config import) in later tasks.
       specialArgs = {
