@@ -308,6 +308,23 @@ csv_cells() {
     | from_entries' "$1"
 }
 
+# counter_diff_table G6JSON CELLSJSON — emit one "cell counter: expected=E actual=A delta=D tol=T" line per
+# baseline cell×counter that VIOLATES tolerance (INV pair exact, BAND pair within ±PREAMBLE_BAND). Empty
+# output ⇒ every counter within tolerance. Turns the baselines gate into a self-diagnosing instrument.
+counter_diff_table() {
+  jq -r -n --slurpfile g6 "$1" --argjson cells "$2" \
+    --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
+    ($g6[0]) as $g
+    | [ $g.hosts | keys[] as $h | ["baseline-composition","baseline-toplevel"][] as $arm
+        | ($INV + $BAND)[] as $c
+        | ($cells[$h + "|" + $arm][$c]) as $act | ($g.hosts[$h][$arm].counters[$c]) as $exp
+        | ($act - $exp) as $d
+        | (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end) as $bad
+        | select($bad)
+        | "    \($h)/\($arm) \($c): expected=\($exp) actual=\($act) delta=\($d) tol=\(if $INV | index($c) then "exact" else "±\($band)" end)" ]
+    | .[]'
+}
+
 g_remeasure_baselines() {
   local dir out cells
   dir="$(locate_flake)" || {
@@ -324,15 +341,16 @@ g_remeasure_baselines() {
     | ($g.hosts | keys | all(. as $h | ["baseline-composition","baseline-toplevel"] | all(. as $arm
         | $cells[$h + "|" + $arm].digest == $g.hosts[$h][$arm].digest)))' >/dev/null || return 1
   # counters only when the runner's nix matches the baseline's pinned nix: invariant pair EXACT, sensitive
-  # pair within the documented ±2 preamble band.
+  # pair within the documented ±2 preamble band. On mismatch, print a VERBOSE per-counter table (expected
+  # / actual / delta / tolerance) so a CI failure is self-diagnosing — a gate that prints only FAIL is not.
   if [[ "$SAME_NIX" == "1" ]]; then
-    jq -e -n --slurpfile g6 "$G6" --argjson cells "$cells" \
-      --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
-      ($g6[0]) as $g
-      | ($g.hosts | keys | all(. as $h | ["baseline-composition","baseline-toplevel"] | all(. as $arm
-          | ($INV | all(. as $c | $cells[$h + "|" + $arm][$c] == $g.hosts[$h][$arm].counters[$c]))
-            and ($BAND | all(. as $c
-              | ($cells[$h + "|" + $arm][$c] - $g.hosts[$h][$arm].counters[$c] | fabs) <= $band)))))' >/dev/null || return 1
+    local diff
+    diff="$(counter_diff_table "$G6" "$cells")"
+    if [[ -n "$diff" ]]; then
+      echo "  [ci-remeasure baselines] COUNTER MISMATCH (evaluator '$RUNNER_NIX'):" >&2
+      echo "$diff" >&2
+      return 1
+    fi
   else
     echo "  [info] baseline-composition/-toplevel counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); digests gated" >&2
   fi
@@ -367,13 +385,22 @@ g_remeasure_csr() {
       and ($F.counters.reconstruct.digest == $B.measurement.reconstruct.digest)
       and ($F.counters.inject.digest == $B.measurement.inject.digest)' >/dev/null || return 1
   if [[ "$SAME_NIX" == "1" ]]; then
-    jq -e -n --slurpfile f "$facts" --slurpfile b "$CSR" \
+    local diff
+    diff="$(jq -r -n --slurpfile f "$facts" --slurpfile b "$CSR" \
       --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
       ($f[0]) as $F | ($b[0]) as $B
-      | ["archetype","reconstruct","inject"] | all(. as $k
-          | ($INV | all(. as $c | $F.counters[$k].counters[$c] == $B.measurement[$k].counters[$c]))
-            and ($BAND | all(. as $c
-              | ($F.counters[$k].counters[$c] - $B.measurement[$k].counters[$c] | fabs) <= $band)))' >/dev/null || return 1
+      | [ ["archetype","reconstruct","inject"][] as $k | ($INV + $BAND)[] as $c
+          | ($F.counters[$k].counters[$c]) as $act | ($B.measurement[$k].counters[$c]) as $exp
+          | ($act - $exp) as $d
+          | (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end) as $bad
+          | select($bad)
+          | "    \($k) \($c): expected=\($exp) actual=\($act) delta=\($d) tol=\(if $INV | index($c) then "exact" else "±\($band)" end)" ]
+      | .[]')"
+    if [[ -n "$diff" ]]; then
+      echo "  [ci-remeasure csr] COUNTER MISMATCH (evaluator '$RUNNER_NIX'):" >&2
+      echo "$diff" >&2
+      return 1
+    fi
   else
     echo "  [info] class-share-realization counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); byte gate + digests gated" >&2
   fi
@@ -408,12 +435,22 @@ g_remeasure_classshare() {
     | ($g.hosts | keys | all(. as $h
         | $cells[$h + "|class-share"].digest == $g.hosts[$h]["baseline-composition"].digest))' >/dev/null || return 1
   if [[ "$SAME_NIX" == "1" ]]; then
-    jq -e -n --slurpfile dd "$DEDUP" --argjson cells "$cells" \
+    local diff
+    diff="$(jq -r -n --slurpfile dd "$DEDUP" --argjson cells "$cells" \
       --argjson INV "$INV_JSON" --argjson BAND "$BAND_JSON" --argjson band "$PREAMBLE_BAND" '
       ($dd[0]["class-share"].compositionWitness.perHost) as $cw
-      | ($cw | keys | all(. as $h
-          | ($INV | all(. as $c | $cells[$h + "|class-share"][$c] == $cw[$h].s2[$c]))
-            and ($BAND | all(. as $c | ($cells[$h + "|class-share"][$c] - $cw[$h].s2[$c] | fabs) <= $band))))' >/dev/null || return 1
+      | [ $cw | keys[] as $h | ($INV + $BAND)[] as $c
+          | ($cells[$h + "|class-share"][$c]) as $act | ($cw[$h].s2[$c]) as $exp
+          | ($act - $exp) as $d
+          | (if ($INV | index($c)) then ($d != 0) else (($d | fabs) > $band) end) as $bad
+          | select($bad)
+          | "    \($h) \($c): expected=\($exp) actual=\($act) delta=\($d) tol=\(if $INV | index($c) then "exact" else "±\($band)" end)" ]
+      | .[]')"
+    if [[ -n "$diff" ]]; then
+      echo "  [local-remeasure class-share] COUNTER MISMATCH (evaluator '$RUNNER_NIX'):" >&2
+      echo "$diff" >&2
+      return 1
+    fi
   else
     echo "  [info] class-share s2 counters reported, NOT gated (evaluator '$RUNNER_NIX' != pinned '$EXPECTED_NIX'); byte gate (digest) gated" >&2
   fi
