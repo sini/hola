@@ -248,6 +248,31 @@ g_armC_delta() {
   ' >/dev/null
 }
 
+# Arm-C TERMINAL-pessimal: den@s2's machinery cost at the TERMINAL (toplevel) plane — also an OVERHEAD
+# record, NO floor (the terminal is derivation-storm-dominated; s2's per-host overhead is paid in full,
+# no sharing manifests). Re-assert the block's internal arithmetic (delta == s2 − pinned per host + fleet,
+# the fleet == Σ per-host, the fcall fraction) AND the byte tie: each terminalDrvPath == the recorded s2
+# terminal drvPath == the g6-split baseline-toplevel digest — the pessimal delta is measured on a
+# byte-identical terminal, else it is a BUG not an overhead. EXPLICIT counter paths (never a .counters glob).
+g_armC_terminal_pessimal() {
+  jq -e -n --slurpfile g6 "$G6" --slurpfile dd "$DEDUP" --argjson C "$DET_JSON" '
+    ($g6[0]) as $g | ($dd[0]["class-share"]) as $cs | ($cs.terminalPessimal) as $tp
+    | ($tp.perHost | keys) as $hk
+    | ($hk | all(. as $h | $C | all(. as $c
+        | $tp.perHost[$h].delta[$c] == ($tp.perHost[$h].s2[$c] - $tp.perHost[$h].pinned[$c]))))
+      and ($hk | all(. as $h
+        | (($tp.perHost[$h].delta.nrFunctionCalls / $tp.perHost[$h].pinned.nrFunctionCalls)
+           - $tp.perHost[$h].deltaFractionFcalls | fabs) < 1e-9))
+      and ($C | all(. as $c
+        | $tp.fleet.pinned[$c] == ([ $hk[] | $tp.perHost[.].pinned[$c] ] | add)
+          and $tp.fleet.s2[$c] == ([ $hk[] | $tp.perHost[.].s2[$c] ] | add)
+          and $tp.fleet.delta[$c] == ($tp.fleet.s2[$c] - $tp.fleet.pinned[$c])))
+      and ($hk | all(. as $h
+        | $tp.perHost[$h].terminalDrvPath == $cs.byteGate.toplevelDrvPath.perHost[$h].s2
+          and $tp.perHost[$h].terminalDrvPath == $g.hosts[$h]["baseline-toplevel"].digest))
+  ' >/dev/null
+}
+
 # Task-7b realization class-share: perAddedMemberSaving == reconstruct − inject; fractionOfReconstruct ==
 # saving/reconstruct; the pattern's byte gate (injectedDigest == realDigest == the reconstruct digest);
 # and the shared-core counts are sane. EXPLICIT paths — never realizationPlaneNativeShare.countersInformational.
@@ -285,6 +310,7 @@ CONSISTENCY_GATES=(
   "g_armR_floor|Arm-R FLOOR: saving >= 0.60 of fleet composition fcalls"
   "g_armC_bytegate|Arm-C byte gates (composition digest + terminal drvPath)"
   "g_armC_delta|Arm-C delta = s2 - pinned (overhead record, no floor)"
+  "g_armC_terminal_pessimal|Arm-C terminal-pessimal delta = s2 - pinned + drvPath byte tie (overhead record, no floor)"
   "g_csr_consistency|Task-7b saving arithmetic + byte gate (injected == real)"
   "g_csr_floor|Task-7b FLOOR: saving >= 0.008 of reconstruct fcalls"
 )

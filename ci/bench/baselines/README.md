@@ -304,6 +304,21 @@ secondary `cfg.config` witness is **informational only** — its `deepSeq` stack
 the delta is stable and agrees with the primary, the absolutes are a crash-prefix. Full
 reasoning: `../MEASUREMENT.md` §"Task 7 amendments".
 
+**Arm C — `class-share.terminalPessimal`, the s2 cost at the TERMINAL plane.** The composition
+delta above is the DECLARATION plane. `class-share.terminalPessimal` pins the companion PESSIMAL
+plane: what den@s2 costs when forcing `system.build.toplevel.drvPath` (the terminal), per host. The
+terminal is derivation-storm-dominated (composition is only ~5% of its `//`-storm), so s2's per-host
+machinery (pipe.reads cone-expander + per-sid `hostConfigFor`) is paid in FULL while no cross-host
+sharing manifests in this separate-per-host harness — a consistent **+1.3–2.4% fcalls** overhead
+(bitstream 2.37% / blade 1.49% / cortex 1.33%; fleet +1.65%) on a **byte-identical terminal** (the
+drvPath is unchanged — `byteGate.toplevelDrvPath`). It is an OVERHEAD/soundness record, **NOT a win —
+no floor**. Both terminal forces (pinned + s2) are measured in ONE out-of-band preamble by
+`ci/bench/class-share-toplevel-pessimal.sh` (×2 STOP-on-diff), so the `s2 − pinned` delta is BIT-EXACT
+within-preamble; the `pinned` terminal is re-measured there (not read from `g6-split.json`) for that
+exactness, and its counters differ from `g6-split.json` `baseline-toplevel` only by the ±1-3 out-of-band
+preamble wobble (its drvPath is byte-identical — the byte gate). `../MEASUREMENT.md` §"The canonical-key
+fold" keeps this a documented script, not a fifth canonical arm.
+
 ### How to reproduce
 
 The deterministic counters + digests reproduce bit-for-bit per nix version (verified
@@ -316,11 +331,16 @@ the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
    nix run ./ci#fleet-stats -- --arms class-share --hosts bitstream,blade,cortex --reps 1 --out /tmp/cshare
    ```
 
-1. Class-share terminal byte gate (out-of-band; s2 `toplevel.drvPath` must equal the
-   `g6-split.json` `baseline-toplevel` digest per host). One host shown; repeat per host:
+1. Class-share terminal byte gate + PESSIMAL-plane cost — `ci/bench/class-share-toplevel-pessimal.sh`
+   (the first-class, committed form of the former out-of-band `nix eval`; `../MEASUREMENT.md` §"The
+   canonical-key fold"). Per host it forces `toplevel.drvPath` under den@pinned AND den@s2 in ONE
+   out-of-band preamble (×2 STOP-on-diff on the four counters + the drvPath), asserts the byte gate
+   (pinned == s2 == the `g6-split.json` `baseline-toplevel` digest — a hard fail if the terminal
+   moved), and emits `facts.json` (both counter sets + drvPaths). The `pinned` terminal is measured
+   in-band with s2 so the `s2 − pinned` delta is within-preamble exact:
 
    ```sh
-   nix eval --impure --raw --expr 'let nc = builtins.getFlake "github:sini/nix-config/8f84aa62168994714d5dc18459d4c5fe96650239"; s2 = builtins.getFlake "git+file:///home/sini/Documents/repos/den?ref=feat/s2-pipe-reads&rev=487cc671e87982ad04bca69fb9a5723c85ed22ca"; lib = nc.inputs.nixpkgs-unstable.lib; hola = import ./. { inherit lib; }; ncS2 = nc // { inputs = nc.inputs // { den = s2; }; }; in (hola.adapter.runDenFleet (l: l) (hola.corpus.denFleet.mk { nixConfig = ncS2; host = "bitstream"; channelInput = "nixpkgs-unstable"; })).config.system.build.toplevel.drvPath'
+   bash ci/bench/class-share-toplevel-pessimal.sh --out /tmp/tpess    # ~6-7 min; ulimit -s unlimited is set inside
    ```
 
 1. Rebuild-dedup soundness record + digest (fleet-wide, run once):
@@ -381,6 +401,38 @@ the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
    the load-bearing arithmetic (saving = Σ skipped-host baseline composition; delta =
    `s2 − pinned`; both byte gates). Re-run on the same nix version must reproduce every
    deterministic counter + digest exactly — if not, **STOP and report, do not average.**
+
+1. Splice the `class-share.terminalPessimal` block (Arm-C terminal-plane cost) from the step-2
+   `facts.json`. Every number is jq-derived from the facts (the `pinned`/`s2` terminal counters,
+   measured in one out-of-band preamble); the `delta` / `deltaFractionFcalls` / fleet sums are
+   computed, nothing hand-typed. This splice is IDEMPOTENT (a plain assignment) — running it on the
+   committed file reproduces it byte-for-byte. (The block's `note` + the top-level `framing` / `pinNote`
+   / `generated` terminalPessimal sentences are authored prose, same as the rest of this file's framing.)
+
+   ```sh
+   jq -n --slurpfile dd ci/bench/baselines/dedup-savings.json --slurpfile tp /tmp/tpess/facts.json '
+     ($dd[0]) as $D | ($tp[0].perHost) as $TP
+     | ["nrFunctionCalls","nrPrimOpCalls","nrOpUpdateValuesCopied","nrThunks"] as $C
+     | ($TP | keys) as $hk
+     | def sub2($a; $b): ($C | map({(.): (($a[.]) - ($b[.]))}) | add);
+       def sumP(sel): ($C | map(. as $c | {(.): ([$hk[] | $TP[.] | sel | .counters[$c]] | add)}) | add);
+       ($hk | map(. as $h | ($TP[$h].pinned.counters) as $p | ($TP[$h].s2.counters) as $s
+         | {($h): { pinned: $p, s2: $s, delta: sub2($s; $p),
+                    deltaFractionFcalls: (sub2($s; $p).nrFunctionCalls / $p.nrFunctionCalls),
+                    terminalDrvPath: $TP[$h].s2.drvPath }}) | add) as $perHost
+     | (sumP(.pinned)) as $fp | (sumP(.s2)) as $fs
+     | $D
+     | .["class-share"].terminalPessimal = {
+         note: "PESSIMAL-plane (terminal / system.build.toplevel.drvPath) cost record for den@s2. The terminal is derivation-storm-dominated (g6-split: composition is only ~5% of the terminal //-storm), so den@s2 per-host machinery (pipe.reads cone-expander + per-sid hostConfigFor) is paid in FULL while the cross-host sharing s2 targets cannot manifest in this separate-per-host harness. delta = s2 - pinned; POSITIVE = OVERHEAD on a BYTE-IDENTICAL terminal (terminalDrvPath unchanged — see byteGate.toplevelDrvPath; a class-share arm that MOVED the drvPath would be a BUG, not a win) → this is an overhead/soundness record, NOT a win, so there is NO floor. Both forces measured in ONE out-of-band preamble (ci/bench/class-share-toplevel-pessimal.sh, x2 STOP-on-diff) so delta is BIT-EXACT within-preamble (secondaryWitness discipline). The `pinned` terminal is re-measured HERE for that exactness, NOT read from g6-split; its drvPath == g6-split baseline-toplevel (the byte gate) and its counters match g6-split baseline-toplevel within the +-1-3 out-of-band preamble wobble (pinNote).",
+         perHost: $perHost,
+         fleet: { pinned: $fp, s2: $fs, delta: sub2($fs; $fp),
+                  deltaFractionFcalls: (sub2($fs; $fp).nrFunctionCalls / $fp.nrFunctionCalls) } }
+   ' > /tmp/dedup-new.json && mv /tmp/dedup-new.json ci/bench/baselines/dedup-savings.json
+   ```
+
+   `g_armC_terminal_pessimal` (fleet-gates.sh `[consistency]`) re-asserts this block: `delta == s2 − pinned` per host + fleet, the fleet counters == Σ per-host, the fcall fraction, and each
+   `terminalDrvPath` == the recorded s2 terminal drvPath == the `g6-split.json` `baseline-toplevel`
+   digest (the pessimal delta is measured on a byte-identical terminal, else it is a bug).
 
 ## class-share-realization — the shared-eval class-share arm (`class-share-realization.json`)
 

@@ -269,7 +269,12 @@ collapse this separate-per-host-eval harness structurally cannot capture.
 
 **The gate (byte).** The terminal must stay byte-identical: overriding den to s1
 leaves `toplevel.drvPath` unchanged (verified below — `identical: true`). A
-class-share arm that moves the drvPath is a bug, not a win.
+class-share arm that moves the drvPath is a bug, not a win. What s2 *costs* to
+force that byte-identical terminal — the pessimal plane, where the derivation
+storm dominates and no sharing manifests — is pinned in
+`dedup-savings.json` `class-share.terminalPessimal` (see the fold decision below;
+measured by `ci/bench/class-share-toplevel-pessimal.sh`, an overhead record, no
+floor).
 
 **Viability: VIABLE.** Branches exist as worktrees, fresh (last commit
 2026-06-28), s2 ⊃ s1, and the fleet's pinned den (`5df0987`) is an ancestor of
@@ -429,13 +434,20 @@ fold, now fixed:
   `fleet-stats`): `compositionNames` under `nc.inputs.den = s2` vs the pinned
   baseline. Its digest column doubles as the *declaration* byte gate (must equal
   the `baseline-composition` digest).
-- **The `class-share` TERMINAL byte gate** (`toplevel.drvPath` under s2 == pinned)
-  is run **out-of-band**, not as a fifth canonical key. A `_`-prefixed manifest
-  entry would be skipped by the driver (unrunnable via `--arms`, and none exists),
-  and the key set is
-  locked — so the terminal gate is a documented `nix eval` (see
-  `baselines/README.md`) whose result is recorded as a secondary evidence block in
-  `dedup-savings.json`. Verified byte-identical on all three hosts.
+- **The `class-share` TERMINAL byte gate AND its cost** (`toplevel.drvPath` under
+  s2 == pinned, plus what s2 *costs* to force it) is a committed, reproducible
+  ARTIFACT — the `ci/bench/class-share-toplevel-pessimal.sh` script — NOT a fifth
+  canonical key. The fold holds: a `_`-prefixed manifest entry would be skipped by
+  the driver (unrunnable via `--arms`, and none exists) and the key set is locked,
+  so the terminal gate stays a documented **script** (the first-class form of the
+  former out-of-band `nix eval`), whose byte result AND the s2 terminal-plane cost
+  are pinned in `dedup-savings.json` (`class-share.terminalPessimal`: s2 − pinned
+  per host, a byte-identical-terminal OVERHEAD record — **no floor**, since the
+  derivation-storm-dominated terminal pays s2's per-host machinery in full while no
+  cross-host sharing manifests). Verified byte-identical on all three hosts, with a
+  consistent **+1.3–2.4% fcalls** s2 overhead (bitstream 2.37% / blade 1.49% /
+  cortex 1.33%). The `[consistency]` gate `g_armC_terminal_pessimal` re-asserts the
+  block's arithmetic + the drvPath byte tie.
 - **`rebuild-dedup` is FLEET-WIDE, run at ONE host.** Its arm expr builds the
   whole gen-rebuild fleet graph with a fixed `editHost`, so it is identical for
   every driver `host` binding; running it per-host would triple the work for the
