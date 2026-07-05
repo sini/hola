@@ -8,7 +8,7 @@ on:
 jobs:
   # Correctness: parity oracles (den-fleet-parity, engine-parity, channel-modules-identity) + format.
   #
-  # Two runner-level settings are load-bearing and were the cause of the pre-campaign RED on this job:
+  # THREE runner-level settings are load-bearing and were the cause of the pre-campaign RED on this job:
   #   - extra-experimental-features = pipe-operators — the ci flake needs it to eval nix-config. Declaring
   #     it in the flake's nixConfig (ci/flake.nix) is NOT enough: an untrusted CI runner ignores flake
   #     nixConfig, so it must be a RUNNER nix.conf setting (extra-conf), not a flake setting.
@@ -33,6 +33,8 @@ jobs:
           sudo fallocate -l 12G /mnt/swapfile-ci && sudo chmod 600 /mnt/swapfile-ci \
             && sudo mkswap /mnt/swapfile-ci && sudo swapon /mnt/swapfile-ci || true
           free -h; df -h /
+      # KEEP IN SYNC with the fleet-gates job's installer step — pipe-operators is load-bearing (the ci
+      # flake evals nix-config, which uses pipe operators); an untrusted runner ignores flake nixConfig.
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           extra-conf: |
@@ -56,6 +58,8 @@ jobs:
         working-directory: ci
     steps:
       - uses: actions/checkout@v4
+      # KEEP IN SYNC with the check job's installer step — pipe-operators is load-bearing (fleet-gates
+      # re-invokes `nix run .#fleet-stats` + evals the parity tests, all over the pipe-operators ci flake).
       - uses: DeterminateSystems/nix-installer-action@main
         with:
           extra-conf: |

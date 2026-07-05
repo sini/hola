@@ -147,11 +147,19 @@ report() {
   fi
 }
 
+# report_diff LABEL DETAIL — print a localizing failure block (a header + the indented DETAIL body) to
+# stderr, so EVERY re-measure failure (counter, digest, or parity) names what diverged, not a silent
+# `return 1`. DETAIL is pre-indented (4 spaces per line), as diff_counters / the digest diffs emit.
+report_diff() {
+  echo "  [$1] MISMATCH:" >&2
+  echo "$2" >&2
+}
+
 # locate the LIVE flake dir (needed only by the re-measurement gates: a nested `nix run` from a /nix/store
 # path breaks the ci flake's `../.` self-reference — same constraint as parity-report.sh). Prefer $PWD.
 locate_flake() {
   local d
-  for d in "$PWD" "$PWD/ci" "$HOLA_SRC/ci"; do
+  for d in "$PWD/ci" "$PWD" "$HOLA_SRC/ci"; do  # ci-first: a repo-root launch must not pick the app-less root flake
     [[ -f "$d/flake.nix" ]] && {
       printf '%s' "$d"
       return 0
@@ -266,41 +274,42 @@ g_csr_floor() {
   ' >/dev/null
 }
 
+# The [consistency] gate roster — ONE "gate_fn|description" list. Both the normal sweep and the --selftest
+# failure count iterate it, so adding a gate is a single entry (no two hand-synced lists). The gate fns are
+# invoked indirectly by name here (SC2329 excluded for the fleet-gates app in ci/apps.nix — they ARE all
+# invoked, just through this roster).
+CONSISTENCY_GATES=(
+  "g_pins|cross-file pin agreement (nix-config / den / nixpkgs)"
+  "g_dualsite|dual-site rev pins (gen-rebuild + den-s2 in arms.json / flake.nix)"
+  "g_armR_consistency|Arm-R saving = sum of skipped baseline-composition (byte-exact)"
+  "g_armR_floor|Arm-R FLOOR: saving >= 0.60 of fleet composition fcalls"
+  "g_armC_bytegate|Arm-C byte gates (composition digest + terminal drvPath)"
+  "g_armC_delta|Arm-C delta = s2 - pinned (overhead record, no floor)"
+  "g_csr_consistency|Task-7b saving arithmetic + byte gate (injected == real)"
+  "g_csr_floor|Task-7b FLOOR: saving >= 0.008 of reconstruct fcalls"
+)
+
 # The normal [consistency] sweep: labelled PASS/FAIL to stdout, tally into the global FAILURES.
 run_consistency() {
   set_baselines "$1"
-  local rc
-  g_pins && rc=0 || rc=1
-  report consistency "cross-file pin agreement (nix-config / den / nixpkgs)" "$rc"
-  g_dualsite && rc=0 || rc=1
-  report consistency "dual-site rev pins (gen-rebuild + den-s2 in arms.json / flake.nix)" "$rc"
-  g_armR_consistency && rc=0 || rc=1
-  report consistency "Arm-R saving = sum of skipped baseline-composition (byte-exact)" "$rc"
-  g_armR_floor && rc=0 || rc=1
-  report consistency "Arm-R FLOOR: saving >= 0.60 of fleet composition fcalls" "$rc"
-  g_armC_bytegate && rc=0 || rc=1
-  report consistency "Arm-C byte gates (composition digest + terminal drvPath)" "$rc"
-  g_armC_delta && rc=0 || rc=1
-  report consistency "Arm-C delta = s2 - pinned (overhead record, no floor)" "$rc"
-  g_csr_consistency && rc=0 || rc=1
-  report consistency "Task-7b saving arithmetic + byte gate (injected == real)" "$rc"
-  g_csr_floor && rc=0 || rc=1
-  report consistency "Task-7b FLOOR: saving >= 0.008 of reconstruct fcalls" "$rc"
+  local entry fn desc rc
+  for entry in "${CONSISTENCY_GATES[@]}"; do
+    fn="${entry%%|*}"
+    desc="${entry#*|}"
+    "$fn" && rc=0 || rc=1
+    report consistency "$desc" "$rc"
+  done
 }
 
 # Silent [consistency] failure count against a (possibly corrupted) baseline set — used only by --selftest.
 # A LOCAL counter (no global FAILURES, no subshell variable sharing), echoed to stdout.
 count_consistency_failures() {
   set_baselines "$1"
-  local n=0
-  g_pins || n=$((n + 1))
-  g_dualsite || n=$((n + 1))
-  g_armR_consistency || n=$((n + 1))
-  g_armR_floor || n=$((n + 1))
-  g_armC_bytegate || n=$((n + 1))
-  g_armC_delta || n=$((n + 1))
-  g_csr_consistency || n=$((n + 1))
-  g_csr_floor || n=$((n + 1))
+  local entry fn n=0
+  for entry in "${CONSISTENCY_GATES[@]}"; do
+    fn="${entry%%|*}"
+    "$fn" || n=$((n + 1))
+  done
   printf '%s' "$n"
 }
 
@@ -345,22 +354,27 @@ g_remeasure_baselines() {
   (cd "$dir" && nix run ".#fleet-stats" -- --arms baseline-composition,baseline-toplevel \
     --hosts bitstream,blade,cortex --reps 1 --out "$out") >&2 || return 1
   cells="$(csv_cells "$out/results.csv")"
-  # digests always (nix-version-independent)
-  jq -e -n --slurpfile g6 "$G6" --argjson cells "$cells" '
+  local ddiff exp diff
+  # digests always (the cross-evaluator structural spine) — on mismatch, name the cell + both digests.
+  ddiff="$(jq -r -n --slurpfile g6 "$G6" --argjson cells "$cells" '
     ($g6[0]) as $g
-    | ($g.hosts | keys | all(. as $h | ["baseline-composition","baseline-toplevel"] | all(. as $arm
-        | $cells[$h + "|" + $arm].digest == $g.hosts[$h][$arm].digest)))' >/dev/null || return 1
+    | [ $g.hosts | keys[] as $h | ["baseline-composition","baseline-toplevel"][] as $arm
+        | select($cells[$h + "|" + $arm].digest != $g.hosts[$h][$arm].digest)
+        | "    \($h)/\($arm) digest: expected=\($g.hosts[$h][$arm].digest) actual=\($cells[$h + "|" + $arm].digest)" ]
+    | .[]')"
+  if [[ -n "$ddiff" ]]; then
+    report_diff "ci-remeasure baselines DIGEST" "$ddiff"
+    return 1
+  fi
   # counters gated in BOTH tiers (strict exact on the baseline evaluator / ci ±0.1% relative elsewhere, per
   # CMODE); diff_counters prints a verbose per-counter table on any violation.
-  local exp diff
   exp="$(jq -c -n --slurpfile g6 "$G6" '
     ($g6[0].hosts) as $h
     | [ $h | keys[] as $host | ["baseline-composition","baseline-toplevel"][] as $arm
         | { key: ($host + "|" + $arm), value: $h[$host][$arm].counters } ] | from_entries')"
   diff="$(diff_counters "$exp" "$cells")"
   if [[ -n "$diff" ]]; then
-    echo "  [ci-remeasure baselines] COUNTER MISMATCH (mode=$CMODE, evaluator '$RUNNER_NIX'):" >&2
-    echo "$diff" >&2
+    report_diff "ci-remeasure baselines COUNTER (mode=$CMODE, evaluator '$RUNNER_NIX')" "$diff"
     return 1
   fi
   return 0
@@ -371,10 +385,14 @@ g_remeasure_rebuild() {
   dir="$(locate_flake)" || return 1
   out="$(mktemp -d)"
   (cd "$dir" && nix run ".#fleet-stats" -- --arms rebuild-dedup --hosts bitstream --reps 1 --out "$out") >&2 || return 1
-  # the arm's digest is sha256 of the soundness record (structural, nix-version-independent) — the gate.
+  # the arm's digest is sha256 of the soundness record (structural, cross-evaluator) — the gate.
   dig="$(jq -R -s 'split("\n") | map(select(length > 0)) | .[1] | split(",") | .[9]' "$out/results.csv" | tr -d '"')"
   want="$(jq -r '.["rebuild-dedup"].byteGate.digest' "$DEDUP")"
-  [[ -n "$dig" && "$dig" == "$want" ]]
+  if [[ -z "$dig" || "$dig" != "$want" ]]; then
+    report_diff "ci-remeasure rebuild-dedup DIGEST" "    rebuild-dedup soundness record: expected=$want actual=${dig:-<none>}"
+    return 1
+  fi
+  return 0
 }
 
 g_remeasure_csr() {
@@ -383,17 +401,20 @@ g_remeasure_csr() {
   bash "$HOLA_SRC/ci/bench/class-share-realization.sh" --out "$out" >&2 || return 1
   facts="$out/facts.json"
   [[ -f "$facts" ]] || return 1
-  # the pattern byte gate + all digests (nix-version-independent)
-  jq -e -n --slurpfile f "$facts" --slurpfile b "$CSR" '
+  local bdiff exp act diff
+  # the pattern byte gate + all digests (cross-evaluator) — on mismatch, name EACH failing check.
+  bdiff="$(jq -r -n --slurpfile f "$facts" --slurpfile b "$CSR" '
     ($f[0]) as $F | ($b[0]) as $B
-    | ($F.byteGate.gate == true)
-      and ($F.byteGate.injectedDigest == $B.byteGate.injectedDigest)
-      and ($F.byteGate.realDigest == $B.byteGate.realDigest)
-      and ($F.class.sharedKeysDigest == $B.class.sharedCore.sharedKeysDigest)
-      and ($F.counters.archetype.digest == $B.measurement.archetype.digest)
-      and ($F.counters.reconstruct.digest == $B.measurement.reconstruct.digest)
-      and ($F.counters.inject.digest == $B.measurement.inject.digest)' >/dev/null || return 1
-  local exp act diff
+    | [ (if $F.byteGate.gate != true then "    byteGate.gate: expected=true actual=\($F.byteGate.gate)" else empty end),
+        (if $F.byteGate.injectedDigest != $B.byteGate.injectedDigest then "    byteGate.injectedDigest: expected=\($B.byteGate.injectedDigest) actual=\($F.byteGate.injectedDigest)" else empty end),
+        (if $F.byteGate.realDigest != $B.byteGate.realDigest then "    byteGate.realDigest: expected=\($B.byteGate.realDigest) actual=\($F.byteGate.realDigest)" else empty end),
+        (if $F.class.sharedKeysDigest != $B.class.sharedCore.sharedKeysDigest then "    sharedKeysDigest: expected=\($B.class.sharedCore.sharedKeysDigest) actual=\($F.class.sharedKeysDigest)" else empty end),
+        (["archetype","reconstruct","inject"][] as $k | if $F.counters[$k].digest != $B.measurement[$k].digest then "    \($k).digest: expected=\($B.measurement[$k].digest) actual=\($F.counters[$k].digest)" else empty end) ]
+    | .[]')"
+  if [[ -n "$bdiff" ]]; then
+    report_diff "ci-remeasure csr BYTE GATE / DIGEST" "$bdiff"
+    return 1
+  fi
   exp="$(jq -c -n --slurpfile b "$CSR" '
     ($b[0].measurement) as $m
     | { archetype: $m.archetype.counters, reconstruct: $m.reconstruct.counters, inject: $m.inject.counters }')"
@@ -402,8 +423,7 @@ g_remeasure_csr() {
     | { archetype: $c.archetype.counters, reconstruct: $c.reconstruct.counters, inject: $c.inject.counters }')"
   diff="$(diff_counters "$exp" "$act")"
   if [[ -n "$diff" ]]; then
-    echo "  [ci-remeasure csr] COUNTER MISMATCH (mode=$CMODE, evaluator '$RUNNER_NIX'):" >&2
-    echo "$diff" >&2
+    report_diff "ci-remeasure csr COUNTER (mode=$CMODE, evaluator '$RUNNER_NIX')" "$diff"
     return 1
   fi
   return 0
@@ -414,11 +434,24 @@ g_parity() {
   local dir h res
   dir="$(locate_flake)" || return 1
   for h in bitstream blade cortex; do
-    res="$(cd "$dir" && nix eval --impure ".#tests.den-fleet-parity.$h.expr")" || return 1
-    [[ "$res" == "true" ]] || return 1
+    res="$(cd "$dir" && nix eval --impure ".#tests.den-fleet-parity.$h.expr")" || {
+      report_diff "parity den-fleet-parity" "    $h: nix eval FAILED (vanilla vs vendored-engine drvPath)"
+      return 1
+    }
+    [[ "$res" == "true" ]] || {
+      report_diff "parity den-fleet-parity" "    $h: expected=true actual=$res (vanilla != vendored-engine drvPath)"
+      return 1
+    }
   done
-  res="$(cd "$dir" && nix eval --impure ".#tests.channel-modules-identity.check.expr")" || return 1
-  [[ "$res" == "true" ]]
+  res="$(cd "$dir" && nix eval --impure ".#tests.channel-modules-identity.check.expr")" || {
+    report_diff "parity channel-modules-identity" "    check: nix eval FAILED"
+    return 1
+  }
+  [[ "$res" == "true" ]] || {
+    report_diff "parity channel-modules-identity" "    check: expected=true actual=$res"
+    return 1
+  }
+  return 0
 }
 
 # ── [local-remeasure] — Arm-C s2 arm (LOCAL-ONLY: needs den git+file:// worktrees) ──
@@ -431,41 +464,51 @@ g_remeasure_classshare() {
     return 1
   }
   cells="$(csv_cells "$out/results.csv")"
-  # byte gate: s2 composition digest == the pinned baseline-composition digest, per host (declarations unchanged)
-  jq -e -n --slurpfile g6 "$G6" --argjson cells "$cells" '
+  local ddiff exp diff
+  # byte gate: s2 composition digest == the pinned baseline-composition digest, per host (declarations unchanged).
+  ddiff="$(jq -r -n --slurpfile g6 "$G6" --argjson cells "$cells" '
     ($g6[0]) as $g
-    | ($g.hosts | keys | all(. as $h
-        | $cells[$h + "|class-share"].digest == $g.hosts[$h]["baseline-composition"].digest))' >/dev/null || return 1
-  local exp diff
+    | [ $g.hosts | keys[] as $h
+        | select($cells[$h + "|class-share"].digest != $g.hosts[$h]["baseline-composition"].digest)
+        | "    \($h) class-share digest: expected=\($g.hosts[$h]["baseline-composition"].digest) actual=\($cells[$h + "|class-share"].digest)" ]
+    | .[]')"
+  if [[ -n "$ddiff" ]]; then
+    report_diff "local-remeasure class-share DIGEST" "$ddiff"
+    return 1
+  fi
   exp="$(jq -c -n --slurpfile dd "$DEDUP" '
     ($dd[0]["class-share"].compositionWitness.perHost) as $cw
     | [ $cw | keys[] as $h | { key: ($h + "|class-share"), value: $cw[$h].s2 } ] | from_entries')"
   diff="$(diff_counters "$exp" "$cells")"
   if [[ -n "$diff" ]]; then
-    echo "  [local-remeasure class-share] COUNTER MISMATCH (mode=$CMODE, evaluator '$RUNNER_NIX'):" >&2
-    echo "$diff" >&2
+    report_diff "local-remeasure class-share COUNTER (mode=$CMODE, evaluator '$RUNNER_NIX')" "$diff"
     return 1
   fi
   return 0
 }
 
+# corrupt_copy FILE JQ — a FRESH temp dir with the three baselines copied and made writable (the committed
+# baselines are read-only 0444 store files when the app runs from /nix/store), then JQ applied to FILE in
+# place. Echoes the dir. Each teeth case gets its OWN dir — no cross-teeth state, no re-copy over 0444, no
+# set-e landmine.
+corrupt_copy() {
+  local file="$1" jqexpr="$2" d
+  d="$(mktemp -d)"
+  cp "$BL_SRC"/*.json "$d/"
+  chmod -R u+w "$d"
+  jq "$jqexpr" "$d/$file" >"$d/.corrupt" && mv "$d/.corrupt" "$d/$file"
+  printf '%s' "$d"
+}
+
 # ── [teeth] — prove a corrupted counter AND a corrupted floor each FAIL the [consistency] sweep ──
 g_selftest() {
-  local tmp failed_counter failed_floor
-  tmp="$(mktemp -d)"
-
+  local d1 d2 failed_counter failed_floor
   # teeth #1: corrupt a deterministic COUNTER the Arm-R arithmetic depends on (blade composition fcalls).
-  cp "$BL_SRC"/*.json "$tmp/"
-  jq '.hosts.blade["baseline-composition"].counters.nrFunctionCalls += 1' "$tmp/g6-split.json" >"$tmp/g6.new"
-  mv "$tmp/g6.new" "$tmp/g6-split.json"
-  failed_counter="$(count_consistency_failures "$tmp")"
-
+  d1="$(corrupt_copy g6-split.json '.hosts.blade["baseline-composition"].counters.nrFunctionCalls += 1')"
+  failed_counter="$(count_consistency_failures "$d1")"
   # teeth #2: corrupt the Arm-R FLOOR value below its pin (0.667 -> 0.10 < 0.60).
-  cp "$BL_SRC"/*.json "$tmp/"
-  jq '.["rebuild-dedup"].singleHostEdit.savedFractionOfFleetComposition.nrFunctionCalls = 0.10' \
-    "$tmp/dedup-savings.json" >"$tmp/dd.new"
-  mv "$tmp/dd.new" "$tmp/dedup-savings.json"
-  failed_floor="$(count_consistency_failures "$tmp")"
+  d2="$(corrupt_copy dedup-savings.json '.["rebuild-dedup"].singleHostEdit.savedFractionOfFleetComposition.nrFunctionCalls = 0.10')"
+  failed_floor="$(count_consistency_failures "$d2")"
 
   echo "  teeth #1 (corrupt a pinned counter): $failed_counter consistency gate(s) failed (expect >= 1)" >&2
   echo "  teeth #2 (corrupt a pinned floor):   $failed_floor consistency gate(s) failed (expect >= 1)" >&2

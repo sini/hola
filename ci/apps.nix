@@ -14,14 +14,17 @@
       nixpkgsSrc = inputs.nixpkgs; # ci flake's pinned nixpkgs (package-free lib path + floor)
       # extraEnv: name→value strings baked as `export name="value"` after the two common vars, for
       # scripts that need more baked context (fleet-stats bakes the pinned nix-config store path).
+      # excludeChecks: shellcheck codes to suppress (fleet-gates dispatches its consistency gates through a
+      # roster array, so their fns are invoked indirectly by name — a legitimate SC2329 exclusion).
       mkBench =
-        name: extraInputs: extraEnv: scriptFile:
+        name: extraInputs: extraEnv: excludeChecks: scriptFile:
         let
           envLines = pkgs.lib.concatStringsSep "\n" (
             pkgs.lib.mapAttrsToList (k: v: ''export ${k}="${v}"'') extraEnv
           );
           app = pkgs.writeShellApplication {
             inherit name;
+            excludeShellChecks = excludeChecks;
             runtimeInputs = [
               pkgs.nix
               pkgs.jq
@@ -41,22 +44,23 @@
         };
     in
     {
-      apps.stat-capture = mkBench "stat-capture" [ ] { } ./bench/stat-capture.sh;
-      apps.scaling-curve = mkBench "scaling-curve" [ ] { } ./bench/scaling-curve.sh;
-      apps.floor-decomp = mkBench "floor-decomp" [ ] { } ./bench/floor-decomp.sh;
-      apps.parity-report = mkBench "parity-report" [ pkgs.hyperfine ] { } ./bench/parity-report.sh;
-      apps.vendor-check = mkBench "vendor-check" [ ] { } ./bench/vendor-check.sh;
+      apps.stat-capture = mkBench "stat-capture" [ ] { } [ ] ./bench/stat-capture.sh;
+      apps.scaling-curve = mkBench "scaling-curve" [ ] { } [ ] ./bench/scaling-curve.sh;
+      apps.floor-decomp = mkBench "floor-decomp" [ ] { } [ ] ./bench/floor-decomp.sh;
+      apps.parity-report = mkBench "parity-report" [ pkgs.hyperfine ] { } [ ] ./bench/parity-report.sh;
+      apps.vendor-check = mkBench "vendor-check" [ ] { } [ ] ./bench/vendor-check.sh;
       # Fleet tier: bakes the ci-pinned nix-config source (getFlake'd back to a flake value in the
       # driver — the shell equivalent of the parity test's specialArgs `denFleet.nixConfig`).
       apps.fleet-stats = mkBench "fleet-stats" [ ] {
         HOLA_FLEET_NIXCONFIG = "${inputs.nix-config}";
-      } ./bench/fleet-stats.sh;
+      } [ ] ./bench/fleet-stats.sh;
       # Task 8 regression gate: re-asserts the campaign's parity + savings baselines. UNLIKE the other
       # Tier-2 apps this one DOES gate (the CI workflow's fleet-gates job runs it). It re-invokes
       # `nix run .#fleet-stats` + class-share-realization.sh for the [ci-remeasure] partition, so it also
       # bakes the pinned nix-config (for symmetry) though its consistency partition needs only HOLA_SRC.
+      # SC2329: the consistency-gate roster invokes its gate fns indirectly by name.
       apps.fleet-gates = mkBench "fleet-gates" [ ] {
         HOLA_FLEET_NIXCONFIG = "${inputs.nix-config}";
-      } ./bench/fleet-gates.sh;
+      } [ "SC2329" ] ./bench/fleet-gates.sh;
     };
 }
