@@ -164,6 +164,12 @@ are Task 7's and are not exercised by this baseline.
 Refresh is a full re-run plus a re-generate. All numbers come from the CSV via `jq`;
 nothing is hand-typed.
 
+> **Consistency-pin home:** the `[consistency]` roster + these three baseline JSONs are ALSO
+> pinned in the gen hub (the trust surface — `github:sini/gen`, `nix run ./ci#fleet-consistency`),
+> which cites these numbers in its BENCHMARKS. After a refresh here, copy the JSONs to the hub
+> verbatim (its `ci/bench/baselines/README.md` documents the receiving side). hola remains the
+> only re-measurement home.
+
 1. Full-fleet run (writes `results.csv` + `summary.md` to `--out`). Task 7 added the
    `class-share` / `rebuild-dedup` arms to the manifest, so the driver's DEFAULT arm
    set is now all four — the G6 baseline refresh must name its two arms explicitly:
