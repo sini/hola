@@ -509,7 +509,7 @@ reproduce here — reconciled, not contradicted:
    each host in a SEPARATE process — no cross-host thunk sharing is structurally
    possible, so s2's sharing cannot manifest and only its overhead shows.
 
-1. **The declaration layer is already shared** (keystone — reproducible). Forcing
+2. **The declaration layer is already shared** (keystone — reproducible). Forcing
    blade + cortex `compositionNames` from ONE shared `out` (both nixpkgs-master,
    pinned den) costs **18,836,571 `nrFunctionCalls`** — only **1.066×** a single
    host (blade `baseline-composition` = 17,673,112), NOT 2× (the naive per-host sum
@@ -541,7 +541,7 @@ reproduce here — reconciled, not contradicted:
    / `nrThunks` may shift ±1–2 under a different preamble — see the
    `dedup-savings.json` `pinNote`. The 1.066× ratio is unaffected.)
 
-1. **No terminating witness reaches the resolution layer.** The only
+3. **No terminating witness reaches the resolution layer.** The only
    derivation-free witness that completes cleanly is the options walk (declaration
    layer). `cfg.config` (the resolution layer where s2 helps) does not terminate:
    its `deepSeq` hits a derivation's `outputsList` and **stack-overflows —

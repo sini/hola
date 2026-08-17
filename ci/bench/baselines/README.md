@@ -184,7 +184,7 @@ nothing is hand-typed.
    `baseline-toplevel` arm dominates and scales with host size — cortex's is
    ~35 s/rep, bitstream's ~15 s.
 
-1. Regenerate `g6-split.json` from that CSV. `PINS` is the input-rev block (not a
+2. Regenerate `g6-split.json` from that CSV. `PINS` is the input-rev block (not a
    measured number); every counter/digest/ratio is computed by the `jq` program from
    the CSV. The four evaluator counters are exact-pinned; `gcTotalBytes` is carried
    as `…Informational` (never in `counters`, never gated):
@@ -252,7 +252,7 @@ nothing is hand-typed.
    ' /tmp/g6/results.csv > ci/bench/baselines/g6-split.json
    ```
 
-1. Verify: a second `nix run ./ci#fleet-stats` on the same nix version must
+3. Verify: a second `nix run ./ci#fleet-stats` on the same nix version must
    reproduce every **exact-pinned** counter and digest exactly. Diff the two CSVs'
    pinned columns — host, arm, the four evaluator counters, digest (column 9,
    `gcTotalBytes`, is **excluded**: it is informational and drifts):
@@ -346,7 +346,7 @@ the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
    nix run ./ci#fleet-stats -- --arms class-share --hosts bitstream,blade,cortex --reps 1 --out /tmp/cshare
    ```
 
-1. Class-share terminal byte gate + PESSIMAL-plane cost — `ci/bench/class-share-toplevel-pessimal.sh`
+2. Class-share terminal byte gate + PESSIMAL-plane cost — `ci/bench/class-share-toplevel-pessimal.sh`
    (the first-class, committed form of the former out-of-band `nix eval`; `../MEASUREMENT.md` §"The
    canonical-key fold"). Per host it forces `toplevel.drvPath` under den@pinned AND den@s2 in ONE
    out-of-band preamble (×2 STOP-on-diff on the four counters + the drvPath), asserts the byte gate
@@ -358,13 +358,13 @@ the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
    bash ci/bench/class-share-toplevel-pessimal.sh --out /tmp/tpess    # ~6-7 min; ulimit -s unlimited is set inside
    ```
 
-1. Rebuild-dedup soundness record + digest (fleet-wide, run once):
+3. Rebuild-dedup soundness record + digest (fleet-wide, run once):
 
    ```sh
    nix run ./ci#fleet-stats -- --arms rebuild-dedup --hosts bitstream --reps 1 --out /tmp/rdedup
    ```
 
-1. Regenerate `dedup-savings.json`. `FACTS` holds the values measured by steps 2–3 (the
+4. Regenerate `dedup-savings.json`. `FACTS` holds the values measured by steps 2–3 (the
    byte-gate drvPaths, the `rebuild-dedup` soundness record + digest, and the secondary
    `cfg.config` counters — recorded verbatim from the evals, not derived). The jq program
    then reads `g6-split.json` (pinned `baseline-composition`) + the class-share CSV (s2
@@ -417,7 +417,7 @@ the measured CSV + the pinned `g6-split.json`; nothing is hand-typed.
    `s2 − pinned`; both byte gates). Re-run on the same nix version must reproduce every
    deterministic counter + digest exactly — if not, **STOP and report, do not average.**
 
-1. Splice the `class-share.terminalPessimal` block (Arm-C terminal-plane cost) from the step-2
+5. Splice the `class-share.terminalPessimal` block (Arm-C terminal-plane cost) from the step-2
    `facts.json`. Every number is jq-derived from the facts (the `pinned`/`s2` terminal counters,
    measured in one out-of-band preamble); the `delta` / `deltaFractionFcalls` / fleet sums are
    computed, nothing hand-typed. This splice is IDEMPOTENT (a plain assignment) — running it on the
@@ -514,7 +514,7 @@ framing are literal — same split as the `g6-split.json` / `dedup-savings.json`
    bash ci/bench/class-share-realization.sh --out /tmp/csr    # ~5–6 min; ulimit -s unlimited is set inside
    ```
 
-1. Regenerate `class-share-realization.json` from `facts.json`. `PINS` is the input-rev block;
+2. Regenerate `class-share-realization.json` from `facts.json`. `PINS` is the input-rev block;
    `PRIOR` is the cited synth context (the ONLY hand-transcribed numbers — same convention as
    `dedup-savings.json` citing the 60% prior); every measured value AND every derived delta /
    fraction / ratio (incl `perAddedMemberSaving`, `projectionCostShare.systemdUnitsFractionOfMemberFcalls`,
