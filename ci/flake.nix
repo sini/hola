@@ -6,7 +6,7 @@
     ];
   };
   inputs = {
-    gen.url = "github:sini/gen";
+    gen-harness.url = "github:sini/gen-harness";
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
     den.url = "github:denful/den";
     import-tree.url = "github:vic/import-tree";
@@ -19,17 +19,17 @@
     gen-rebuild.url = "github:sini/gen-rebuild/7a87691f004679668852d53fc130a57bc305e20a";
   };
   outputs =
-    inputs@{ gen, nixpkgs, ... }:
+    inputs@{ gen-harness, nixpkgs, ... }:
     let
       hola = import ../. { lib = nixpkgs.lib; };
     in
-    gen.lib.mkCi {
+    gen-harness.lib.mkCi {
       inherit inputs;
       name = "hola";
       testModules = ./tests;
       # Tier-2 evidence apps (perSystem.apps) — mostly non-gating; fleet-gates (Task 8) DOES gate.
-      # The stack-raising nix-unit hook wrapper now comes from gen's mkCi itself (flakeModule.nix,
-      # since gen@6d259ef) — the local precommit.nix override it superseded is deleted.
+      # The stack-raising nix-unit hook wrapper comes from the harness's own mkCi (gen-harness
+      # flakeModule.nix) — the local precommit.nix override it superseded is deleted.
       extraModules = [
         ./apps.nix
       ];
