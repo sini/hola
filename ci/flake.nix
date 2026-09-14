@@ -32,6 +32,10 @@
       # flakeModule.nix) — the local precommit.nix override it superseded is deleted.
       extraModules = [
         ./apps.nix
+        # hola is a TOOL, not an ecosystem library: it is absent from the register roster
+        # (`gen/lib/mkGenLibs.nix`), so no capability sheet is owed. Recorded as a declaration
+        # rather than left silent, so the absence reads as a decision (owner, 2026-09-14).
+        { gen.ci.agentsMd.sheet = "not-owed"; }
       ];
       # nixpkgs threaded for the real-host fixture (eval-config import) in later tasks.
       specialArgs = {
